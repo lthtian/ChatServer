@@ -12,19 +12,53 @@ class FriendModel
 {
 public:
     // 添加好友
-    bool insert(int userid, int friendid)
+    int insert(int userid, string name)
     {
-        string sql = "insert into Friend(userid,friendid) values(" + to_string(userid) + "," + to_string(friendid) + ")";
+        MySQL mysql;
+        int friendid = -1;
+        // 根据用户名查找用户id, 找不到返回1
 
+        if (mysql.connect())
+        {
+            string sql1 = "select id from User where name = '" + name + "'";
+            MYSQL_RES *result = mysql.query(sql1.c_str());
+            if (result)
+            {
+                MYSQL_ROW row;
+                row = mysql_fetch_row(result);
+                if (row == nullptr)
+                {
+                    mysql.free(result);
+                    return 1;
+                }
+                friendid = atoi(row[0]);
+            }
+            else
+                return 1;
+
+            mysql.free(result); // 释放结果集
+
+            string sql2 = "insert into Friend(userid,friendid) values(" + to_string(userid) + "," + to_string(friendid) + ")";
+            string sql3 = "insert into Friend(userid,friendid) values(" + to_string(friendid) + "," + to_string(userid) + ")";
+
+            if (mysql.update(sql2) && mysql.update(sql3))
+                return 0;
+        }
+
+        return 2;
+    }
+
+    void remove(int userid, int friendid)
+    {
+        string sql1 = "delete from Friend where userid = " + to_string(userid) + " and friendid = " + to_string(friendid);
+        string sql2 = "delete from Friend where userid = " + to_string(friendid) + " and friendid = " + to_string(userid);
         MySQL mysql;
         if (mysql.connect())
         {
-            if (mysql.update(sql))
-                return true;
+            mysql.update(sql1);
+            mysql.update(sql2);
         }
-        return false;
     }
-
     // 根据用户id返回好友信息
     vector<string> query(int userid)
     {

@@ -34,14 +34,71 @@ void ChatServer::onConnection(const TcpConnectionPtr &conn) // 连接回调函�
     }
 }
 
-void ChatServer::onMessage(const TcpConnectionPtr &conn, Buffer *buffer, Timestamp time) // 消息回调函数指定三个参数
+void ChatServer::onMessage(const TcpConnectionPtr &conn, Buffer *buffer, Timestamp time)
 {
-    string buf = buffer->retrieveAllAsString();
-    // 数据反序列化
-    json js = json::parse(buf);
-    // 主要目的在于解耦网络模块和业务模块
-    // 通过js["msgid"]获取业务handler
-    auto msgHandler = ChatService::instance()->getHandler(js["msgid"].get<int>());
-    // 回调消息绑定好的事件处理器, 来执行相应的业务处理
-    msgHandler(conn, js, time);
+    std::string buf = buffer->retrieveAllAsString();
+    _recvBuffers[conn] += buf; // 追加到连接的缓冲区
+
+    std::string &recvBuf = _recvBuffers[conn];
+    size_t start_pos = 0;
+    int brace_count = 0;
+    bool in_string = false;
+
+    for (size_t i = 0; i < recvBuf.size(); ++i)
+    {
+        char c = recvBuf[i];
+        if (c == '"')
+        {
+            // 检查前面的转义符数量是否为偶数
+            int backslashCount = 0;
+            size_t j = i;
+            while (j > 0 && recvBuf[j - 1] == '\\')
+            {
+                backslashCount++;
+                j--;
+            }
+            if (backslashCount % 2 == 0)
+            { // 未被转义
+                in_string = !in_string;
+            }
+        }
+
+        if (!in_string)
+        {
+            if (c == '{')
+            {
+                brace_count++;
+            }
+            else if (c == '}')
+            {
+                brace_count--;
+                if (brace_count == 0)
+                {
+                    // 提取当前JSON对象
+                    std::string json_str = recvBuf.substr(start_pos, i - start_pos + 1);
+                    start_pos = i + 1;
+
+                    try
+                    {
+                        nlohmann::json js = nlohmann::json::parse(json_str);
+                        auto msgHandler = ChatService::instance()->getHandler(js["msgid"].get<int>());
+                        msgHandler(conn, js, time);
+                    }
+                    catch (const std::exception &e)
+                    {
+                        std::cerr << "JSON error: " << e.what() << std::endl;
+                        // conn->shutdown();
+                        _recvBuffers.erase(conn);
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    // 保留未处理的数据
+    if (start_pos > 0)
+    {
+        recvBuf = (start_pos < recvBuf.size()) ? recvBuf.substr(start_pos) : "";
+    }
 }

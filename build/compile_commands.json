@@ -1,0 +1,32 @@
+[
+{
+  "directory": "/home/lth/learn/CHAT/ChatServer/build/src/server",
+  "command": "/usr/bin/g++  -I/home/lth/learn/CHAT/ChatServer/include -I/home/lth/learn/CHAT/ChatServer/include/server -I/home/lth/learn/CHAT/ChatServer/include/server/db -I/home/lth/learn/CHAT/ChatServer/include/server/model -I/home/lth/learn/CHAT/ChatServer/include/server/redis -I/home/lth/learn/CHAT/ChatServer/thirdparty -isystem /usr/include/opencv4 -g -g -o CMakeFiles/ChatServer.dir/chatserver.cpp.o -c /home/lth/learn/CHAT/ChatServer/src/server/chatserver.cpp",
+  "file": "/home/lth/learn/CHAT/ChatServer/src/server/chatserver.cpp",
+  "output": "src/server/CMakeFiles/ChatServer.dir/chatserver.cpp.o"
+},
+{
+  "directory": "/home/lth/learn/CHAT/ChatServer/build/src/server",
+  "command": "/usr/bin/g++  -I/home/lth/learn/CHAT/ChatServer/include -I/home/lth/learn/CHAT/ChatServer/include/server -I/home/lth/learn/CHAT/ChatServer/include/server/db -I/home/lth/learn/CHAT/ChatServer/include/server/model -I/home/lth/learn/CHAT/ChatServer/include/server/redis -I/home/lth/learn/CHAT/ChatServer/thirdparty -isystem /usr/include/opencv4 -g -g -o CMakeFiles/ChatServer.dir/chatservice.cpp.o -c /home/lth/learn/CHAT/ChatServer/src/server/chatservice.cpp",
+  "file": "/home/lth/learn/CHAT/ChatServer/src/server/chatservice.cpp",
+  "output": "src/server/CMakeFiles/ChatServer.dir/chatservice.cpp.o"
+},
+{
+  "directory": "/home/lth/learn/CHAT/ChatServer/build/src/server",
+  "command": "/usr/bin/g++  -I/home/lth/learn/CHAT/ChatServer/include -I/home/lth/learn/CHAT/ChatServer/include/server -I/home/lth/learn/CHAT/ChatServer/include/server/db -I/home/lth/learn/CHAT/ChatServer/include/server/model -I/home/lth/learn/CHAT/ChatServer/include/server/redis -I/home/lth/learn/CHAT/ChatServer/thirdparty -isystem /usr/include/opencv4 -g -g -o CMakeFiles/ChatServer.dir/main.cpp.o -c /home/lth/learn/CHAT/ChatServer/src/server/main.cpp",
+  "file": "/home/lth/learn/CHAT/ChatServer/src/server/main.cpp",
+  "output": "src/server/CMakeFiles/ChatServer.dir/main.cpp.o"
+},
+{
+  "directory": "/home/lth/learn/CHAT/ChatServer/build/src/server",
+  "command": "/usr/bin/g++  -I/home/lth/learn/CHAT/ChatServer/include -I/home/lth/learn/CHAT/ChatServer/include/server -I/home/lth/learn/CHAT/ChatServer/include/server/db -I/home/lth/learn/CHAT/ChatServer/include/server/model -I/home/lth/learn/CHAT/ChatServer/include/server/redis -I/home/lth/learn/CHAT/ChatServer/thirdparty -isystem /usr/include/opencv4 -g -g -o CMakeFiles/ChatServer.dir/db/db.cpp.o -c /home/lth/learn/CHAT/ChatServer/src/server/db/db.cpp",
+  "file": "/home/lth/learn/CHAT/ChatServer/src/server/db/db.cpp",
+  "output": "src/server/CMakeFiles/ChatServer.dir/db/db.cpp.o"
+},
+{
+  "directory": "/home/lth/learn/CHAT/ChatServer/build/src/server",
+  "command": "/usr/bin/g++  -I/home/lth/learn/CHAT/ChatServer/include -I/home/lth/learn/CHAT/ChatServer/include/server -I/home/lth/learn/CHAT/ChatServer/include/server/db -I/home/lth/learn/CHAT/ChatServer/include/server/model -I/home/lth/learn/CHAT/ChatServer/include/server/redis -I/home/lth/learn/CHAT/ChatServer/thirdparty -isystem /usr/include/opencv4 -g -g -o CMakeFiles/ChatServer.dir/redis/redis.cpp.o -c /home/lth/learn/CHAT/ChatServer/src/server/redis/redis.cpp",
+  "file": "/home/lth/learn/CHAT/ChatServer/src/server/redis/redis.cpp",
+  "output": "src/server/CMakeFiles/ChatServer.dir/redis/redis.cpp.o"
+}
+]

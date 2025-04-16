@@ -19,4 +19,6 @@ private:
 
     TcpServer _server;
     EventLoop *_loop;
+
+    std::unordered_map<TcpConnectionPtr, std::string> _recvBuffers;
 };
