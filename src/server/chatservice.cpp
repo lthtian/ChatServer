@@ -1,5 +1,6 @@
 #include "chatservice.hpp"
 #include "public.hpp"
+#include "connectionpool.h"
 #include <muduo/base/Logging.h>
 #include <openssl/bio.h>
 #include <openssl/evp.h>
@@ -13,6 +14,19 @@ ChatService *ChatService::instance()
 
 ChatService::ChatService()
 {
+    // 初始化数据库连接池
+    DBConfig dbConfig;
+    dbConfig.server = "82.156.254.74";
+    dbConfig.user = "lth";
+    dbConfig.password = "040915ly";
+    dbConfig.dbname = "chat";
+    dbConfig.port = 3306;
+
+    // 连接数 = 业务线程数 + 2（默认10个连接）
+    int connectionCount = 10;
+    ConnectionPool::instance()->init(dbConfig, connectionCount);
+    LOG_INFO << "Database connection pool initialized with " << connectionCount << " connections.";
+
     // 为每个消息类型注册对应的业务代码
     _mhm.insert({LoginMsg, std::bind(&ChatService::login, this, _1, _2, _3)});
     _mhm.insert({RegMsg, std::bind(&ChatService::reg, this, _1, _2, _3)});

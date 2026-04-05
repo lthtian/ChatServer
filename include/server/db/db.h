@@ -8,8 +8,16 @@ class MySQL
 public:
     MySQL();
     ~MySQL();
-    // 利用配置建立连接
+
+    // 使用默认配置建立连接（保留兼容性）
     bool connect();
+
+    // 使用指定参数建立连接（连接池使用）
+    bool connect(const string& server, const string& user, const string& password, const string& dbname, int port);
+
+    // 检查连接是否有效
+    bool isConnected();
+
     // 更新语句
     bool update(string sql);
     // 查询语句

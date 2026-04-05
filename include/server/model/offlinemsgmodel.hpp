@@ -1,7 +1,11 @@
 #pragma once
+
+// 离线消息数据访问层
+
 #include <iostream>
 #include <vector>
 #include "db.h"
+#include "connectionpool.h"
 using namespace std;
 
 class OfflineMsgModel
@@ -12,11 +16,10 @@ public:
     {
         string sql = "insert into OfflineMessage(userid, message) values(" + to_string(userid) + ", '" + msg + "');";
 
-        MySQL mysql;
-        if (mysql.connect())
-        {
-            mysql.update(sql);
-        }
+        ConnectionGuard guard;
+        MySQL* mysql = guard.get();
+        if (mysql)
+            mysql->update(sql);
     }
 
     // 根据用户id删除离线消息
@@ -24,22 +27,23 @@ public:
     {
         string sql = "delete from OfflineMessage where userid = " + to_string(userid) + ";";
 
-        MySQL mysql;
-        if (mysql.connect())
-        {
-            mysql.update(sql);
-        }
+        ConnectionGuard guard;
+        MySQL* mysql = guard.get();
+        if (mysql)
+            mysql->update(sql);
     }
 
+    // 查询用户的离线消息
     vector<string> query(int userid)
     {
         vector<string> vec;
         string sql = "select message from OfflineMessage where userid = " + to_string(userid) + ";";
 
-        MySQL mysql;
-        if (mysql.connect())
+        ConnectionGuard guard;
+        MySQL* mysql = guard.get();
+        if (mysql)
         {
-            MYSQL_RES *res = mysql.query(sql);
+            MYSQL_RES *res = mysql->query(sql);
             if (res != nullptr)
             {
                 MYSQL_ROW row = mysql_fetch_row(res);

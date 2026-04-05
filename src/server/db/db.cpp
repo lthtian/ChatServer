@@ -2,6 +2,7 @@
 #include <muduo/base/Logging.h>
 #include <vector>
 
+// 默认数据库配置（保留兼容性）
 static string server = "82.156.254.74";
 static string user = "lth";
 static string password = "040915ly";
@@ -11,18 +12,38 @@ MySQL::MySQL()
 {
     _conn = mysql_init(nullptr);
 }
+
 MySQL::~MySQL()
 {
     if (_conn != nullptr)
         mysql_close(_conn);
 }
 
+// 使用默认配置建立连接（保留兼容性）
 bool MySQL::connect()
 {
     MYSQL *p = mysql_real_connect(_conn, server.c_str(), user.c_str(), password.c_str(), dbname.c_str(), 3306, nullptr, 0);
     if (p != nullptr)
-        mysql_query(_conn, "set names utf8mb4"); // 后面的选项是为了支持中文
+        mysql_query(_conn, "set names utf8mb4"); // 设置字符集支持中文
     return p;
+}
+
+// 使用指定参数建立连接（连接池使用）
+bool MySQL::connect(const string& server, const string& user, const string& password, const string& dbname, int port)
+{
+    MYSQL *p = mysql_real_connect(_conn, server.c_str(), user.c_str(), password.c_str(), dbname.c_str(), port, nullptr, 0);
+    if (p != nullptr)
+        mysql_query(_conn, "set names utf8mb4"); // 设置字符集支持中文
+    return p;
+}
+
+// 检查连接是否有效
+bool MySQL::isConnected()
+{
+    if (_conn == nullptr)
+        return false;
+    // 执行简单查询测试连接
+    return mysql_query(_conn, "SELECT 1") == 0;
 }
 
 bool MySQL::update(string sql)

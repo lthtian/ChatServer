@@ -4,18 +4,38 @@
 
 #include <functional>
 #include <string>
+#include <iostream>
 using namespace std;
 using namespace placeholders;
 using json = nlohmann::json;
 
 ChatServer::ChatServer(EventLoop *loop, const InetAddress &listenAddr, const string &nameArg)
-    : _server(loop, listenAddr, nameArg), _loop(loop)
+    : _server(loop, listenAddr, nameArg), _loop(loop), _workerPool(nullptr)
 {
     // 绑定连接建立/断开时的处理服务
     _server.setConnectionCallback(std::bind(&ChatServer::onConnection, this, _1));
     // 绑定发生消息读写时的处理服务
     _server.setMessageCallback(std::bind(&ChatServer::onMessage, this, _1, _2, _3));
-    _server.setThreadNum(2);
+    _server.setThreadNum(2);  // IO线程数
+
+    // 创建业务线程池（线程数 = CPU核心数 - 2，至少保留2个给IO线程）
+    int workerThreadNum = std::thread::hardware_concurrency() - 2;
+    if (workerThreadNum < 4) {
+        workerThreadNum = 4;  // 最少4个业务线程
+    }
+    _workerPool = new WorkerThreadPool(workerThreadNum, _taskQueue);
+    cout << "Business thread pool started with " << workerThreadNum << " threads." << endl;
+}
+
+ChatServer::~ChatServer()
+{
+    // 先关闭业务线程池，等待所有任务完成
+    if (_workerPool) {
+        _workerPool->shutdown();
+        delete _workerPool;
+        _workerPool = nullptr;
+    }
+    cout << "ChatServer destroyed, all worker threads stopped." << endl;
 }
 
 void ChatServer::start()
@@ -82,7 +102,14 @@ void ChatServer::onMessage(const TcpConnectionPtr &conn, Buffer *buffer, Timesta
                     {
                         nlohmann::json js = nlohmann::json::parse(json_str);
                         auto msgHandler = ChatService::instance()->getHandler(js["msgid"].get<int>());
-                        msgHandler(conn, js, time);
+
+                        // 将任务投递到业务线程池，IO线程立即返回处理其他连接
+                        Task task;
+                        task.conn = conn;
+                        task.js = js;
+                        task.time = time;
+                        task.handler = msgHandler;
+                        _taskQueue.push(task);
                     }
                     catch (const std::exception &e)
                     {
