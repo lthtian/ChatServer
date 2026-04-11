@@ -16,9 +16,9 @@ ChatService::ChatService()
 {
     // 初始化数据库连接池
     DBConfig dbConfig;
-    dbConfig.server = "82.156.254.74";
+    dbConfig.server = "39.105.18.142";
     dbConfig.user = "lth";
-    dbConfig.password = "040915ly";
+    dbConfig.password = "040915Lth!";
     dbConfig.dbname = "chat";
     dbConfig.port = 3306;
 

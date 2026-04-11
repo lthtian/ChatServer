@@ -4,9 +4,9 @@
 
 // 默认数据库配置
 static DBConfig defaultConfig = {
-    "82.156.254.74",  // server
+    "39.105.18.142",  // server
     "lth",            // user
-    "040915ly",       // password
+    "040915lLth!",       // password
     "chat",           // dbname
     3306              // port
 };

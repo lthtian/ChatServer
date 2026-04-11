@@ -3,9 +3,9 @@
 #include <vector>
 
 // 默认数据库配置（保留兼容性）
-static string server = "82.156.254.74";
+static string server = "39.105.18.142";
 static string user = "lth";
-static string password = "040915ly";
+static string password = "040915Lth!";
 static string dbname = "chat";
 
 MySQL::MySQL()

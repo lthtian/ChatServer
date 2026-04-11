@@ -1,9 +1,10 @@
 src/server/CMakeFiles/ChatServer.dir/main.cpp.o: \
- /home/lth/learn/CHAT/ChatServer/src/server/main.cpp \
+ /home/lth/chat_server/ChatServer/src/server/main.cpp \
  /usr/include/stdc-predef.h \
- /home/lth/learn/CHAT/ChatServer/include/server/chatserver.hpp \
- /usr/include/muduo/net/TcpServer.h /usr/include/muduo/base/Atomic.h \
- /usr/include/muduo/base/noncopyable.h \
+ /home/lth/chat_server/ChatServer/include/server/chatserver.hpp \
+ /usr/local/include/muduo/net/TcpServer.h \
+ /usr/local/include/muduo/base/Atomic.h \
+ /usr/local/include/muduo/base/noncopyable.h \
  /usr/lib/gcc/x86_64-linux-gnu/13/include/stdint.h /usr/include/stdint.h \
  /usr/include/x86_64-linux-gnu/bits/libc-header-start.h \
  /usr/include/features.h /usr/include/features-time64.h \
@@ -20,7 +21,7 @@ src/server/CMakeFiles/ChatServer.dir/main.cpp.o: \
  /usr/include/x86_64-linux-gnu/bits/stdint-intn.h \
  /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h \
  /usr/include/x86_64-linux-gnu/bits/stdint-least.h \
- /usr/include/muduo/base/Types.h /usr/include/string.h \
+ /usr/local/include/muduo/base/Types.h /usr/include/string.h \
  /usr/lib/gcc/x86_64-linux-gnu/13/include/stddef.h \
  /usr/include/x86_64-linux-gnu/bits/types/locale_t.h \
  /usr/include/x86_64-linux-gnu/bits/types/__locale_t.h \
@@ -122,10 +123,12 @@ src/server/CMakeFiles/ChatServer.dir/main.cpp.o: \
  /usr/include/c++/13/bits/memory_resource.h /usr/include/c++/13/cstddef \
  /usr/include/c++/13/bits/uses_allocator.h \
  /usr/include/c++/13/bits/uses_allocator_args.h /usr/include/c++/13/tuple \
- /usr/include/assert.h /usr/include/muduo/net/TcpConnection.h \
- /usr/include/muduo/base/StringPiece.h /usr/include/muduo/net/Callbacks.h \
- /usr/include/muduo/base/Timestamp.h /usr/include/muduo/base/copyable.h \
- /usr/local/include/boost/operators.hpp /usr/include/c++/13/iterator \
+ /usr/include/assert.h /usr/local/include/muduo/net/TcpConnection.h \
+ /usr/local/include/muduo/base/StringPiece.h \
+ /usr/local/include/muduo/net/Callbacks.h \
+ /usr/local/include/muduo/base/Timestamp.h \
+ /usr/local/include/muduo/base/copyable.h \
+ /usr/include/boost/operators.hpp /usr/include/c++/13/iterator \
  /usr/include/c++/13/bits/stream_iterator.h \
  /usr/include/c++/13/bits/streambuf_iterator.h \
  /usr/include/c++/13/streambuf /usr/include/c++/13/bits/ios_base.h \
@@ -153,31 +156,30 @@ src/server/CMakeFiles/ChatServer.dir/main.cpp.o: \
  /usr/include/c++/13/bits/exception_ptr.h \
  /usr/include/c++/13/bits/cxxabi_init_exception.h \
  /usr/include/c++/13/typeinfo /usr/include/c++/13/bits/nested_exception.h \
- /usr/include/c++/13/bits/streambuf.tcc \
- /usr/local/include/boost/config.hpp \
- /usr/local/include/boost/config/user.hpp \
- /usr/local/include/boost/config/detail/select_compiler_config.hpp \
- /usr/local/include/boost/config/compiler/gcc.hpp \
- /usr/local/include/boost/config/detail/select_stdlib_config.hpp \
+ /usr/include/c++/13/bits/streambuf.tcc /usr/include/boost/config.hpp \
+ /usr/include/boost/config/user.hpp \
+ /usr/include/boost/config/detail/select_compiler_config.hpp \
+ /usr/include/boost/config/compiler/gcc.hpp \
+ /usr/include/boost/config/detail/select_stdlib_config.hpp \
  /usr/include/c++/13/version \
- /usr/local/include/boost/config/stdlib/libstdcpp3.hpp \
- /usr/include/unistd.h /usr/include/x86_64-linux-gnu/bits/posix_opt.h \
+ /usr/include/boost/config/stdlib/libstdcpp3.hpp /usr/include/unistd.h \
+ /usr/include/x86_64-linux-gnu/bits/posix_opt.h \
  /usr/include/x86_64-linux-gnu/bits/environments.h \
  /usr/include/x86_64-linux-gnu/bits/confname.h \
  /usr/include/x86_64-linux-gnu/bits/getopt_posix.h \
  /usr/include/x86_64-linux-gnu/bits/getopt_core.h \
  /usr/include/x86_64-linux-gnu/bits/unistd_ext.h \
  /usr/include/linux/close_range.h \
- /usr/local/include/boost/config/detail/select_platform_config.hpp \
- /usr/local/include/boost/config/platform/linux.hpp \
- /usr/local/include/boost/config/detail/posix_features.hpp \
- /usr/local/include/boost/config/detail/suffix.hpp \
- /usr/local/include/boost/config/helper_macros.hpp \
- /usr/local/include/boost/config/detail/cxx_composite.hpp \
- /usr/local/include/boost/detail/workaround.hpp \
- /usr/local/include/boost/config/workaround.hpp \
- /usr/local/include/boost/core/addressof.hpp \
- /usr/include/c++/13/functional /usr/include/c++/13/bits/std_function.h \
+ /usr/include/boost/config/detail/select_platform_config.hpp \
+ /usr/include/boost/config/platform/linux.hpp \
+ /usr/include/boost/config/detail/posix_features.hpp \
+ /usr/include/boost/config/detail/suffix.hpp \
+ /usr/include/boost/config/helper_macros.hpp \
+ /usr/include/boost/config/detail/cxx_composite.hpp \
+ /usr/include/boost/detail/workaround.hpp \
+ /usr/include/boost/config/workaround.hpp \
+ /usr/include/boost/core/addressof.hpp /usr/include/c++/13/functional \
+ /usr/include/c++/13/bits/std_function.h \
  /usr/include/c++/13/unordered_map \
  /usr/include/c++/13/bits/unordered_map.h \
  /usr/include/c++/13/bits/hashtable.h \
@@ -207,10 +209,10 @@ src/server/CMakeFiles/ChatServer.dir/main.cpp.o: \
  /usr/include/c++/13/backward/auto_ptr.h \
  /usr/include/c++/13/pstl/glue_memory_defs.h \
  /usr/include/c++/13/pstl/execution_defs.h \
- /usr/include/muduo/net/Buffer.h /usr/include/muduo/net/Endian.h \
- /usr/include/c++/13/algorithm \
+ /usr/local/include/muduo/net/Buffer.h \
+ /usr/local/include/muduo/net/Endian.h /usr/include/c++/13/algorithm \
  /usr/include/c++/13/pstl/glue_algorithm_defs.h \
- /usr/include/muduo/net/InetAddress.h /usr/include/netinet/in.h \
+ /usr/local/include/muduo/net/InetAddress.h /usr/include/netinet/in.h \
  /usr/include/x86_64-linux-gnu/sys/socket.h \
  /usr/include/x86_64-linux-gnu/bits/types/struct_iovec.h \
  /usr/include/x86_64-linux-gnu/bits/socket.h \
@@ -227,35 +229,73 @@ src/server/CMakeFiles/ChatServer.dir/main.cpp.o: \
  /usr/include/x86_64-linux-gnu/asm/sockios.h \
  /usr/include/asm-generic/sockios.h \
  /usr/include/x86_64-linux-gnu/bits/types/struct_osockaddr.h \
- /usr/include/x86_64-linux-gnu/bits/in.h /usr/local/include/boost/any.hpp \
- /usr/local/include/boost/any/bad_any_cast.hpp \
- /usr/local/include/boost/any/fwd.hpp \
- /usr/local/include/boost/any/detail/placeholder.hpp \
- /usr/local/include/boost/type_index.hpp \
- /usr/local/include/boost/type_index/stl_type_index.hpp \
- /usr/local/include/boost/type_index/type_index_facade.hpp \
- /usr/local/include/boost/container_hash/hash_fwd.hpp \
- /usr/include/c++/13/cstring /usr/local/include/boost/throw_exception.hpp \
- /usr/local/include/boost/exception/exception.hpp \
- /usr/local/include/boost/assert/source_location.hpp \
- /usr/local/include/boost/cstdint.hpp /usr/include/c++/13/utility \
- /usr/include/c++/13/bits/stl_relops.h \
- /usr/local/include/boost/core/demangle.hpp /usr/include/c++/13/cxxabi.h \
+ /usr/include/x86_64-linux-gnu/bits/in.h /usr/include/boost/any.hpp \
+ /usr/include/boost/any/bad_any_cast.hpp /usr/include/boost/any/fwd.hpp \
+ /usr/include/boost/config/pragma_message.hpp \
+ /usr/include/boost/type_traits/alignment_of.hpp \
+ /usr/include/boost/type_traits/intrinsics.hpp \
+ /usr/include/boost/type_traits/detail/config.hpp \
+ /usr/include/boost/version.hpp \
+ /usr/include/boost/type_traits/integral_constant.hpp \
+ /usr/include/boost/any/detail/placeholder.hpp \
+ /usr/include/boost/type_index.hpp \
+ /usr/include/boost/type_index/stl_type_index.hpp \
+ /usr/include/boost/type_index/type_index_facade.hpp \
+ /usr/include/boost/container_hash/hash_fwd.hpp \
+ /usr/include/c++/13/cstring /usr/include/boost/static_assert.hpp \
+ /usr/include/boost/throw_exception.hpp \
+ /usr/include/boost/exception/exception.hpp \
+ /usr/include/boost/assert/source_location.hpp \
+ /usr/include/boost/current_function.hpp /usr/include/boost/cstdint.hpp \
+ /usr/include/c++/13/utility /usr/include/c++/13/bits/stl_relops.h \
+ /usr/include/boost/core/demangle.hpp /usr/include/c++/13/cxxabi.h \
  /usr/include/x86_64-linux-gnu/c++/13/bits/cxxabi_tweaks.h \
- /usr/include/c++/13/map /usr/include/c++/13/bits/stl_tree.h \
- /usr/include/c++/13/bits/stl_map.h \
+ /usr/include/boost/type_traits/conditional.hpp \
+ /usr/include/boost/type_traits/is_const.hpp \
+ /usr/include/boost/type_traits/is_reference.hpp \
+ /usr/include/boost/type_traits/is_lvalue_reference.hpp \
+ /usr/include/boost/type_traits/is_rvalue_reference.hpp \
+ /usr/include/boost/type_traits/is_volatile.hpp \
+ /usr/include/boost/type_traits/remove_cv.hpp \
+ /usr/include/boost/type_traits/remove_reference.hpp \
+ /usr/include/boost/type_traits/decay.hpp \
+ /usr/include/boost/type_traits/is_array.hpp \
+ /usr/include/boost/type_traits/is_function.hpp \
+ /usr/include/boost/type_traits/detail/is_function_cxx_11.hpp \
+ /usr/include/boost/type_traits/remove_bounds.hpp \
+ /usr/include/boost/type_traits/remove_extent.hpp \
+ /usr/include/boost/type_traits/add_pointer.hpp \
+ /usr/include/boost/type_traits/add_reference.hpp \
+ /usr/include/boost/core/enable_if.hpp \
+ /usr/include/boost/type_traits/is_same.hpp /usr/include/c++/13/map \
+ /usr/include/c++/13/bits/stl_tree.h /usr/include/c++/13/bits/stl_map.h \
  /usr/include/c++/13/bits/stl_multimap.h \
- /usr/include/muduo/net/EventLoop.h /usr/include/c++/13/atomic \
- /usr/include/muduo/base/Mutex.h /usr/include/muduo/base/CurrentThread.h \
- /usr/include/muduo/net/TimerId.h \
- /home/lth/learn/CHAT/ChatServer/include/server/chatservice.hpp \
+ /usr/local/include/muduo/net/EventLoop.h /usr/include/c++/13/atomic \
+ /usr/local/include/muduo/base/Mutex.h \
+ /usr/local/include/muduo/base/CurrentThread.h \
+ /usr/local/include/muduo/net/TimerId.h /usr/include/c++/13/queue \
+ /usr/include/c++/13/deque /usr/include/c++/13/bits/stl_deque.h \
+ /usr/include/c++/13/bits/deque.tcc /usr/include/c++/13/bits/stl_queue.h \
  /usr/include/c++/13/mutex /usr/include/c++/13/bits/chrono.h \
  /usr/include/c++/13/ratio /usr/include/c++/13/cstdint \
  /usr/include/c++/13/limits /usr/include/c++/13/ctime \
  /usr/include/c++/13/bits/parse_numbers.h \
  /usr/include/c++/13/bits/std_mutex.h \
  /usr/include/c++/13/bits/unique_lock.h \
- /home/lth/learn/CHAT/ChatServer/thirdparty/json.hpp \
+ /usr/include/c++/13/condition_variable /usr/include/c++/13/thread \
+ /usr/include/c++/13/bits/std_thread.h \
+ /usr/include/c++/13/bits/this_thread_sleep.h \
+ /usr/include/c++/13/iostream /usr/include/c++/13/ostream \
+ /usr/include/c++/13/ios /usr/include/c++/13/bits/basic_ios.h \
+ /usr/include/c++/13/bits/locale_facets.h /usr/include/c++/13/cwctype \
+ /usr/include/wctype.h /usr/include/x86_64-linux-gnu/bits/wctype-wchar.h \
+ /usr/include/x86_64-linux-gnu/c++/13/bits/ctype_base.h \
+ /usr/include/x86_64-linux-gnu/c++/13/bits/ctype_inline.h \
+ /usr/include/c++/13/bits/locale_facets.tcc \
+ /usr/include/c++/13/bits/basic_ios.tcc \
+ /usr/include/c++/13/bits/ostream.tcc /usr/include/c++/13/istream \
+ /usr/include/c++/13/bits/istream.tcc \
+ /home/lth/chat_server/ChatServer/thirdparty/json.hpp \
  /usr/include/c++/13/forward_list /usr/include/c++/13/bits/forward_list.h \
  /usr/include/c++/13/bits/forward_list.tcc /usr/include/c++/13/valarray \
  /usr/include/c++/13/cmath /usr/include/math.h \
@@ -291,11 +331,6 @@ src/server/CMakeFiles/ChatServer.dir/main.cpp.o: \
  /usr/include/c++/13/bits/indirect_array.h /usr/include/c++/13/cassert \
  /usr/include/c++/13/filesystem /usr/include/c++/13/bits/fs_fwd.h \
  /usr/include/c++/13/bits/fs_path.h /usr/include/c++/13/locale \
- /usr/include/c++/13/bits/locale_facets.h /usr/include/c++/13/cwctype \
- /usr/include/wctype.h /usr/include/x86_64-linux-gnu/bits/wctype-wchar.h \
- /usr/include/x86_64-linux-gnu/c++/13/bits/ctype_base.h \
- /usr/include/x86_64-linux-gnu/c++/13/bits/ctype_inline.h \
- /usr/include/c++/13/bits/locale_facets.tcc \
  /usr/include/c++/13/bits/locale_facets_nonio.h \
  /usr/include/x86_64-linux-gnu/c++/13/bits/time_members.h \
  /usr/include/x86_64-linux-gnu/c++/13/bits/messages_members.h \
@@ -303,18 +338,14 @@ src/server/CMakeFiles/ChatServer.dir/main.cpp.o: \
  /usr/include/c++/13/bits/locale_facets_nonio.tcc \
  /usr/include/c++/13/bits/locale_conv.h /usr/include/c++/13/iomanip \
  /usr/include/c++/13/bits/quoted_string.h /usr/include/c++/13/sstream \
- /usr/include/c++/13/istream /usr/include/c++/13/ios \
- /usr/include/c++/13/bits/basic_ios.h \
- /usr/include/c++/13/bits/basic_ios.tcc /usr/include/c++/13/ostream \
- /usr/include/c++/13/bits/ostream.tcc \
- /usr/include/c++/13/bits/istream.tcc \
  /usr/include/c++/13/bits/sstream.tcc /usr/include/c++/13/codecvt \
  /usr/include/c++/13/bits/fs_dir.h /usr/include/c++/13/bits/fs_ops.h \
  /usr/include/c++/13/numeric /usr/include/c++/13/bits/stl_numeric.h \
  /usr/include/c++/13/pstl/glue_numeric_defs.h /usr/include/c++/13/any \
- /home/lth/learn/CHAT/ChatServer/include/server/model/usermodel.hpp \
- /home/lth/learn/CHAT/ChatServer/include/server/model/user.hpp \
- /home/lth/learn/CHAT/ChatServer/include/server/db/db.h \
+ /home/lth/chat_server/ChatServer/include/server/chatservice.hpp \
+ /home/lth/chat_server/ChatServer/include/server/model/usermodel.hpp \
+ /home/lth/chat_server/ChatServer/include/server/model/user.hpp \
+ /home/lth/chat_server/ChatServer/include/server/db/db.h \
  /usr/include/mysql/mysql.h \
  /usr/lib/gcc/x86_64-linux-gnu/13/include/stdbool.h \
  /usr/include/mysql/field_types.h /usr/include/mysql/my_list.h \
@@ -325,15 +356,15 @@ src/server/CMakeFiles/ChatServer.dir/main.cpp.o: \
  /usr/include/mysql/plugin_auth_common.h \
  /usr/include/mysql/mysql_version.h /usr/include/mysql/mysql_time.h \
  /usr/include/mysql/errmsg.h \
- /home/lth/learn/CHAT/ChatServer/include/server/model/offlinemsgmodel.hpp \
- /usr/include/c++/13/iostream \
- /home/lth/learn/CHAT/ChatServer/include/server/model/messagemodel.hpp \
- /home/lth/learn/CHAT/ChatServer/include/server/model/friendmodel.hpp \
- /home/lth/learn/CHAT/ChatServer/include/server/model/groupmodel.hpp \
- /home/lth/learn/CHAT/ChatServer/include/server/model/group.hpp \
- /home/lth/learn/CHAT/ChatServer/include/server/model/groupuser.hpp \
- /home/lth/learn/CHAT/ChatServer/include/server/model/newmsgmodel.hpp \
- /home/lth/learn/CHAT/ChatServer/include/server/model/imagemodel.hpp \
+ /home/lth/chat_server/ChatServer/include/server/db/connectionpool.h \
+ /home/lth/chat_server/ChatServer/include/server/model/offlinemsgmodel.hpp \
+ /home/lth/chat_server/ChatServer/include/server/model/messagemodel.hpp \
+ /home/lth/chat_server/ChatServer/include/server/model/friendmodel.hpp \
+ /home/lth/chat_server/ChatServer/include/server/model/groupmodel.hpp \
+ /home/lth/chat_server/ChatServer/include/server/model/group.hpp \
+ /home/lth/chat_server/ChatServer/include/server/model/groupuser.hpp \
+ /home/lth/chat_server/ChatServer/include/server/model/newmsgmodel.hpp \
+ /home/lth/chat_server/ChatServer/include/server/model/imagemodel.hpp \
  /usr/include/openssl/bio.h /usr/include/openssl/macros.h \
  /usr/include/x86_64-linux-gnu/openssl/opensslconf.h \
  /usr/include/x86_64-linux-gnu/openssl/configuration.h \
@@ -465,9 +496,6 @@ src/server/CMakeFiles/ChatServer.dir/main.cpp.o: \
  /usr/include/c++/13/list /usr/include/c++/13/bits/stl_list.h \
  /usr/include/c++/13/bits/list.tcc \
  /usr/include/opencv4/opencv2/stitching/detail/util_inl.hpp \
- /usr/include/c++/13/queue /usr/include/c++/13/deque \
- /usr/include/c++/13/bits/stl_deque.h /usr/include/c++/13/bits/deque.tcc \
- /usr/include/c++/13/bits/stl_queue.h \
  /usr/include/opencv4/opencv2/stitching/detail/camera.hpp \
  /usr/include/opencv4/opencv2/stitching/detail/exposure_compensate.hpp \
  /usr/include/opencv4/opencv2/stitching/detail/seam_finders.hpp \
@@ -476,12 +504,10 @@ src/server/CMakeFiles/ChatServer.dir/main.cpp.o: \
  /usr/include/opencv4/opencv2/video.hpp \
  /usr/include/opencv4/opencv2/video/tracking.hpp \
  /usr/include/opencv4/opencv2/video/background_segm.hpp \
- /home/lth/learn/CHAT/ChatServer/include/server/redis/redis.hpp \
+ /home/lth/chat_server/ChatServer/include/server/redis/redis.hpp \
  /usr/include/hiredis/hiredis.h /usr/include/hiredis/read.h \
  /usr/include/x86_64-linux-gnu/sys/time.h /usr/include/hiredis/sds.h \
- /usr/include/hiredis/alloc.h /usr/include/c++/13/thread \
- /usr/include/c++/13/bits/std_thread.h \
- /usr/include/c++/13/bits/this_thread_sleep.h /usr/include/signal.h \
+ /usr/include/hiredis/alloc.h /usr/include/signal.h \
  /usr/include/x86_64-linux-gnu/bits/signum-generic.h \
  /usr/include/x86_64-linux-gnu/bits/signum-arch.h \
  /usr/include/x86_64-linux-gnu/bits/types/sig_atomic_t.h \
