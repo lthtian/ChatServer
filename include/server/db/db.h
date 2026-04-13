@@ -1,6 +1,7 @@
 #pragma once
 #include <mysql/mysql.h>
 #include <string>
+#include <mutex>
 using namespace std;
 
 class MySQL
@@ -54,4 +55,5 @@ public:
 
 private:
     MYSQL *_conn;
+    std::mutex _mtx;
 };

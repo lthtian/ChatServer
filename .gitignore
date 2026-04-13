@@ -1,0 +1,57 @@
+# Build outputs
+build/
+bin/
+*.o
+*.a
+*.so
+*.exe
+*.out
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+.cmake/
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Claude Code & OpenSpec
+.claude/
+openspec/
+
+# Compiled Object files
+*.obj
+*.ko
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Libraries
+*.lib
+*.la
+
+# Shared Object
+*.dll
+*.dylib
+
+# Log files
+*.log
+
+# Test results
+CTestTestfile.cmake
+_tests/
+
+# Temporary files
+*.tmp
+*.bak
+*.cache

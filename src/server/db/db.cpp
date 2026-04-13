@@ -47,32 +47,34 @@ bool MySQL::isConnected()
 }
 
 bool MySQL::update(string sql)
-{
-    if (mysql_query(_conn, sql.c_str()))
-    {
-        LOG_INFO << __FILE__ << ":" << __LINE__ << ":" << sql << "更新失败!";
-        LOG_INFO << mysql_error(_conn);
-        return false;
-    }
-    return true;
-}
+  {
+      std::lock_guard<std::mutex> lock(_mtx);  // 添加这行
+      if (mysql_query(_conn, sql.c_str()))
+      {
+          LOG_INFO << __FILE__ << ":" << __LINE__ << ":" << sql << "更新失败!";
+          LOG_INFO << mysql_error(_conn);
+          return false;
+      }
+      return true;
+  }
 
-MYSQL_RES *MySQL::query(string sql)
-{
-    if (mysql_query(_conn, sql.c_str()))
-    {
-        LOG_INFO << __FILE__ << ":" << __LINE__ << ":" << sql << "查询失败!";
-        LOG_INFO << mysql_error(_conn);
-        return nullptr;
-    }
+  MYSQL_RES *MySQL::query(string sql)
+  {
+      std::lock_guard<std::mutex> lock(_mtx);  // 添加这行
+      if (mysql_query(_conn, sql.c_str()))
+      {
+          LOG_INFO << __FILE__ << ":" << __LINE__ << ":" << sql << "查询失败!";
+          LOG_INFO << mysql_error(_conn);
+          return nullptr;
+      }
 
-    MYSQL_RES *res = mysql_store_result(_conn); // 这里改成 mysql_store_result
-    if (!res && mysql_field_count(_conn) > 0)   // 只有 SELECT 语句应该返回结果集
-    {
-        LOG_INFO << "查询结果获取失败: " << mysql_error(_conn);
-    }
-    return res;
-}
+      MYSQL_RES *res = mysql_store_result(_conn);
+      if (!res && mysql_field_count(_conn) > 0)
+      {
+          LOG_INFO << "查询结果获取失败: " << mysql_error(_conn);
+      }
+      return res;
+  }
 
 int MySQL::affected_rows()
 {

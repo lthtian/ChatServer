@@ -70,19 +70,24 @@ void ConnectionPool::init(const DBConfig& config, int connectionCount)
 }
 
 MySQL* ConnectionPool::createConnection()
-{
-    MySQL* conn = new MySQL();
-    // 使用配置建立连接
-    if (conn->connect(_config.server, _config.user, _config.password, _config.dbname, _config.port))
-    {
-        return conn;
-    }
-    else
-    {
-        delete conn;
-        return nullptr;
-    }
-}
+  {
+      MySQL* conn = new MySQL();
+      // 使用配置建立连接
+      if (conn->connect(_config.server, _config.user, _config.password, _config.dbname, _config.port))
+      {
+          LOG_INFO << "MySQL connection created successfully to " << _config.server;
+          return conn;
+      }
+      else
+      {
+          LOG_ERROR << "Failed to connect to MySQL server: " << _config.server
+                    << ", user: " << _config.user
+                    << ", dbname: " << _config.dbname
+                    << ", port: " << _config.port;
+          delete conn;
+          return nullptr;
+      }
+  }
 
 MySQL* ConnectionPool::getConnection()
 {

@@ -13,19 +13,25 @@ ChatService *ChatService::instance()
 }
 
 ChatService::ChatService()
-{
-    // 初始化数据库连接池
-    DBConfig dbConfig;
-    dbConfig.server = "39.105.18.142";
-    dbConfig.user = "lth";
-    dbConfig.password = "040915Lth!";
-    dbConfig.dbname = "chat";
-    dbConfig.port = 3306;
+  {
+      // 初始化数据库连接池
+      DBConfig dbConfig;
+      dbConfig.server = "127.0.0.1";
+      dbConfig.user = "lth";
+      dbConfig.password = "040915lLth!";
+      dbConfig.dbname = "chat";
+      dbConfig.port = 3306;
 
-    // 连接数 = 业务线程数 + 2（默认10个连接）
-    int connectionCount = 10;
-    ConnectionPool::instance()->init(dbConfig, connectionCount);
-    LOG_INFO << "Database connection pool initialized with " << connectionCount << " connections.";
+      LOG_INFO << "Initializing MySQL connection pool: server=" << dbConfig.server
+               << ", user=" << dbConfig.user
+               << ", dbname=" << dbConfig.dbname;
+
+      // 连接数 = 业务线程数 + 2（默认10个连接）
+      int connectionCount = 10;
+      ConnectionPool::instance()->init(dbConfig, connectionCount);
+
+      int availableCount = ConnectionPool::instance()->getAvailableCount();
+      LOG_INFO << "Database connection pool initialized. Available connections: " << availableCount;
 
     // 为每个消息类型注册对应的业务代码
     _mhm.insert({LoginMsg, std::bind(&ChatService::login, this, _1, _2, _3)});
