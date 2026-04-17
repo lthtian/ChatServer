@@ -1,0 +1,23 @@
+# 编译产物
+build/
+bin/
+*.o
+*.so
+*.a
+*.out
+
+# 依赖库
+node_modules/
+vcpkg_installed/
+
+# 版本控制
+.git/
+
+# 数据库与日志
+*.log
+mysql_data/
+*.db
+
+# 临时文件
+.cache/
+.vscode/

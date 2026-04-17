@@ -68,10 +68,12 @@ void ChatService::handleRedisSubscribeMessage(int id, string msg)
     if (it != _userConnMap.end())
     {
         it->second->send(msg);
+        LOG_INFO << "[REDIS] SUBSCRIBE recv for " << id << " (delivered)";
         return;
     }
 
     _offlineMsgModel.insert(id, msg);
+    LOG_INFO << "[REDIS] SUBSCRIBE recv for " << id << " (offline)";
 }
 
 // 获取消息类型对应的处理器
@@ -106,6 +108,7 @@ void ChatService::login(const TcpConnectionPtr &conn, json &js, Timestamp time)
             response["id"] = user.getId();
             response["errno"] = 1;
             conn->send(response.dump());
+            LOG_WARN << "[LOGIN] Failed: user " << user.getId() << " already online";
             return;
         }
 
@@ -129,6 +132,7 @@ void ChatService::login(const TcpConnectionPtr &conn, json &js, Timestamp time)
         response["name"] = user.getName();
 
         conn->send(response.dump());
+        LOG_INFO << "[LOGIN] userId=" << user.getId() << " name=" << name;
     }
     else
     {
@@ -138,6 +142,7 @@ void ChatService::login(const TcpConnectionPtr &conn, json &js, Timestamp time)
         response["errno"] = 2; // 2
         response["errmsg"] = "用户不存在或密码错误";
         conn->send(response.dump());
+        LOG_WARN << "[LOGIN] Failed: invalid credentials for " << name;
     }
 }
 
@@ -191,6 +196,7 @@ void ChatService::loginout(const TcpConnectionPtr &conn, json &js, Timestamp tim
 
     // 退订
     _redis.unsubscribe(userid);
+    LOG_INFO << "[LOGOUT] userId=" << userid;
 }
 
 string ChatService::base64_decode(const std::string &encoded)
@@ -215,7 +221,6 @@ string ChatService::base64_decode(const std::string &encoded)
 // 注册任务逻辑 : 填入name, password, 插入到数据库中
 void ChatService::reg(const TcpConnectionPtr &conn, json &js, Timestamp time)
 {
-    cout << "触发注册业务" << endl;
     string name = js["username"];
     string password = js["password"];
 
@@ -226,6 +231,7 @@ void ChatService::reg(const TcpConnectionPtr &conn, json &js, Timestamp time)
 
     if (ret)
     {
+        LOG_INFO << "[REGISTER] Success: " << name << " (userId:" << user.getId() << ")";
         json response;
         response["msgid"] = RegMsgAck;
         response["errno"] = 0;
@@ -246,6 +252,7 @@ void ChatService::reg(const TcpConnectionPtr &conn, json &js, Timestamp time)
     }
     else
     {
+        LOG_WARN << "[REGISTER] Failed: " << name << " already exists";
         json response;
         response["msgid"] = RegMsgAck;
         response["errno"] = 1;
@@ -292,9 +299,10 @@ void ChatService::otoChat(const TcpConnectionPtr &conn, json &js, Timestamp time
 {
     int id = js["id"].get<int>();
     int toid = js["to"].get<int>();
+    string msg = js["message"].get<string>();
 
     // 不管在不在线, 都将消息插入到数据库中
-    _messageModel.insert(getChatKey(id, toid), false, id, js["message"].get<string>());
+    _messageModel.insert(getChatKey(id, toid), false, id, msg);
 
     // 查询toid是否在线
     {
@@ -304,6 +312,7 @@ void ChatService::otoChat(const TcpConnectionPtr &conn, json &js, Timestamp time
         {
             // toid在线, 发送消息
             it->second->send(js.dump());
+            LOG_INFO << "[CHAT] " << id << " -> " << toid << " (oto, local)";
             return;
         }
     }
@@ -312,12 +321,14 @@ void ChatService::otoChat(const TcpConnectionPtr &conn, json &js, Timestamp time
     if (_userModel.queryState(toid) == "online")
     {
         _redis.publish(toid, js.dump());
+        LOG_INFO << "[CHAT] " << id << " -> " << toid << " (oto, redis)";
         return;
     }
 
     // 走到这里说明用户不在线, 未读消息+1
     string key = to_string(toid) + "-" + to_string(id);
     _newMsgModel.addNewMsgByKey(key);
+    LOG_INFO << "[CHAT] " << id << " -> " << toid << " (oto, offline)";
 }
 
 string ChatService::getChatKey(int id1, int id2)
@@ -342,19 +353,21 @@ void ChatService::addFriend(const TcpConnectionPtr &conn, json &js, Timestamp ti
     int ret = _friendModel.insert(userid, friendname);
     if (ret == 0)
     {
-
+        LOG_INFO << "[FRIEND] " << userid << " added " << friendname;
         response["errno"] = 0;
         response["errmsg"] = "添加好友成功";
         conn->send(response.dump());
     }
     else if (ret == 1)
     {
+        LOG_WARN << "[FRIEND] Failed: " << friendname << " not found";
         response["errno"] = 1;
         response["errmsg"] = "该用户不存在";
         conn->send(response.dump());
     }
     else
     {
+        LOG_WARN << "[FRIEND] Failed: " << friendname << " already friend";
         response["errno"] = 2;
         response["errmsg"] = "该用户已经是你的好友";
         conn->send(response.dump());
@@ -372,6 +385,7 @@ void ChatService::createGroup(const TcpConnectionPtr &conn, json &js, Timestamp 
     response["msgid"] = CreateGroupMsgAck;
     if (id != -1)
     {
+        LOG_INFO << "[GROUP] Created: " << name << " (id:" << id << ") by " << creatorid;
         response["errno"] = 0;
         response["errmsg"] = "群组创建成功";
         response["groupid"] = id;
@@ -380,6 +394,7 @@ void ChatService::createGroup(const TcpConnectionPtr &conn, json &js, Timestamp 
     }
     else
     {
+        LOG_ERROR << "[GROUP] Failed to create: " << name;
         response["errno"] = 1;
         response["errmsg"] = "群组创建失败";
         conn->send(response.dump());
@@ -403,6 +418,7 @@ void ChatService::addGroup(const TcpConnectionPtr &conn, json &js, Timestamp tim
 
     if (flag)
     {
+        LOG_INFO << "[GROUP] " << uid << " joined " << gname << " (id:" << gid << ")";
         response["errno"] = 0;
         response["errmsg"] = "群组添加成功";
         response["groupname"] = gname;
@@ -411,6 +427,7 @@ void ChatService::addGroup(const TcpConnectionPtr &conn, json &js, Timestamp tim
     }
     else
     {
+        LOG_WARN << "[GROUP] Failed: " << uid << " join " << gname;
         response["errno"] = 1;
         response["errmsg"] = "群组添加失败";
         conn->send(response.dump());
@@ -429,6 +446,8 @@ void ChatService::groupChat(const TcpConnectionPtr &conn, json &js, Timestamp ti
     _messageModel.insert(to_string(gid), true, uid, msg);
 
     vector<int> uids = _groupModel.queryGroupUsersById(gid, uid);
+    int localCnt = 0, redisCnt = 0, offlineCnt = 0;
+
     for (int id : uids)
     {
         lock_guard<mutex> lock(_connMutex);
@@ -436,18 +455,23 @@ void ChatService::groupChat(const TcpConnectionPtr &conn, json &js, Timestamp ti
         if (it != _userConnMap.end())
         {
             it->second->send(js.dump());
+            localCnt++;
             continue;
         }
         // 向数据库查询该用户是否在线, 在线说明在不同服务器, 发布订阅
         if (_userModel.queryState(id) == "online")
         {
             _redis.publish(id, js.dump());
+            redisCnt++;
             continue;
         }
         // 走到这里说明用户不在线, 未读消息+1
         string key = to_string(id) + "-" + to_string(gid) + "-group";
         _newMsgModel.addNewMsgByKey(key);
+        offlineCnt++;
     }
+    LOG_INFO << "[GROUP] " << uid << " -> group:" << gid
+             << " (local:" << localCnt << " redis:" << redisCnt << " offline:" << offlineCnt << ")";
 }
 
 void ChatService::clientCloseException(const TcpConnectionPtr &conn)
@@ -462,6 +486,7 @@ void ChatService::clientCloseException(const TcpConnectionPtr &conn)
                 // 从map中删除用户的连接信息, 更新数据库中的状态信息
                 user.setId(e.first);
                 _userConnMap.erase(e.first);
+                LOG_INFO << "[DISCONNECT] userId=" << user.getId() << " (abnormal)";
                 break;
             }
         }

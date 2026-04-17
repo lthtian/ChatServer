@@ -9,10 +9,11 @@
 
   void resetHandler(int)
   {
+      cout << "\n[SERVER] Shutting down..." << endl;
       ChatService::instance()->reset();
       if (g_loop)
       {
-          g_loop->quit();  // 退出事件循环，而非直接 exit
+          g_loop->quit();
       }
   }
 

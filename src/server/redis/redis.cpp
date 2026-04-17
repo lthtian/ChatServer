@@ -1,6 +1,7 @@
 #include "redis.hpp"
   #include <iostream>
   #include <unistd.h>
+  #include <pthread.h>
   using namespace std;
 
   Redis::Redis()
@@ -12,13 +13,20 @@
   {
       _stop_flag = true;
 
-      // 强制关闭 socket 让阻塞的 redisGetReply 返回
+      // 先尝试取消线程（必须在 join 之前）
+      if (_subscriber_thread.joinable())
+      {
+          pthread_cancel(_subscriber_thread.native_handle());
+      }
+
+      // 强制关闭 socket
       if (_subcribe_context != nullptr && _subcribe_context->fd > 0)
       {
           close(_subcribe_context->fd);
           _subcribe_context->fd = -1;
       }
 
+      // 现在 join 应该能立即返回
       if (_subscriber_thread.joinable())
       {
           _subscriber_thread.join();
@@ -70,10 +78,11 @@
       redisReply *reply = (redisReply *)redisCommand(_publish_context, "PUBLISH %d %s", channel, message.c_str());
       if (nullptr == reply)
       {
-          cerr << "publish command failed!" << endl;
+          std::cerr << "[REDIS] PUBLISH failed to channel " << channel << std::endl;
           return false;
       }
       freeReplyObject(reply);
+      std::cout << "[REDIS] PUBLISH to " << channel << std::endl;
       return true;
   }
 
@@ -85,7 +94,7 @@
       // 只负责发送命令，不阻塞接收redis server响应消息，否则和notifyMsg线程抢占响应资源
       if (REDIS_ERR == redisAppendCommand(this->_subcribe_context, "SUBSCRIBE %d", channel))
       {
-          cerr << "subscribe command failed!" << endl;
+          std::cerr << "[REDIS] SUBSCRIBE failed for channel " << channel << std::endl;
           return false;
       }
       // redisBufferWrite可以循环发送缓冲区，直到缓冲区数据发送完毕（done被置为1）
@@ -94,12 +103,11 @@
       {
           if (REDIS_ERR == redisBufferWrite(this->_subcribe_context, &done))
           {
-              cerr << "subscribe command failed!" << endl;
+              std::cerr << "[REDIS] SUBSCRIBE write failed for channel " << channel << std::endl;
               return false;
           }
       }
-      // redisGetReply
-
+      std::cout << "[REDIS] SUBSCRIBE " << channel << std::endl;
       return true;
   }
 
@@ -108,7 +116,7 @@
   {
       if (REDIS_ERR == redisAppendCommand(this->_subcribe_context, "UNSUBSCRIBE %d", channel))
       {
-          cerr << "unsubscribe command failed!" << endl;
+          std::cerr << "[REDIS] UNSUBSCRIBE failed for channel " << channel << std::endl;
           return false;
       }
       // redisBufferWrite可以循环发送缓冲区，直到缓冲区数据发送完毕（done被置为1）
@@ -117,16 +125,18 @@
       {
           if (REDIS_ERR == redisBufferWrite(this->_subcribe_context, &done))
           {
-              cerr << "unsubscribe command failed!" << endl;
+              std::cerr << "[REDIS] UNSUBSCRIBE write failed for channel " << channel << std::endl;
               return false;
           }
       }
+      std::cout << "[REDIS] UNSUBSCRIBE " << channel << std::endl;
       return true;
   }
 
   // 在独立线程中接收订阅通道中的消息
   void Redis::observer_channel_message()
   {
+      std::cout << "[Redis] Observer thread started." << std::endl;
       redisReply *reply = nullptr;
       // 持续监听通道上是否有消息发生
       // 如果在其他服务器publish了本服务器订阅的通道, 则本服务器会收到消息
@@ -143,6 +153,7 @@
 
           freeReplyObject(reply);
       }
+      std::cout << "[Redis] Observer thread exiting, stop_flag=" << _stop_flag << std::endl;
   }
 
   // 设置上报通道消息的回调函数

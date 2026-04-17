@@ -43,7 +43,13 @@ bool MySQL::isConnected()
     if (_conn == nullptr)
         return false;
     // 执行简单查询测试连接
-    return mysql_query(_conn, "SELECT 1") == 0;
+    if (mysql_query(_conn, "SELECT 1") != 0)
+        return false;
+    // 必须处理结果集，否则会导致 "Commands out of sync" 错误
+    MYSQL_RES *res = mysql_store_result(_conn);
+    if (res)
+        mysql_free_result(res);
+    return true;
 }
 
 bool MySQL::update(string sql)

@@ -35,7 +35,6 @@ ChatServer::~ChatServer()
         delete _workerPool;
         _workerPool = nullptr;
     }
-    cout << "ChatServer destroyed, all worker threads stopped." << endl;
 }
 
 void ChatServer::start()
