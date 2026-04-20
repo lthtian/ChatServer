@@ -1,5 +1,6 @@
 #include "db.h"
-#include <muduo/base/Logging.h>
+#include "log.hpp"
+#include <cstring>
 #include <vector>
 
 // 默认数据库配置（保留兼容性）

@@ -1,10 +1,11 @@
 #include "chatservice.hpp"
 #include "public.hpp"
 #include "connectionpool.h"
-#include <muduo/base/Logging.h>
+#include "log.hpp"
 #include <openssl/bio.h>
 #include <openssl/evp.h>
-using namespace muduo;
+using namespace std;
+using namespace std::placeholders;
 
 ChatService *ChatService::instance()
 {
@@ -34,24 +35,24 @@ ChatService::ChatService()
       LOG_INFO << "Database connection pool initialized. Available connections: " << availableCount;
 
     // 为每个消息类型注册对应的业务代码
-    _mhm.insert({LoginMsg, std::bind(&ChatService::login, this, _1, _2, _3)});
-    _mhm.insert({RegMsg, std::bind(&ChatService::reg, this, _1, _2, _3)});
-    _mhm.insert({OTOMsg, std::bind(&ChatService::otoChat, this, _1, _2, _3)});
-    _mhm.insert({AddFriendMsg, std::bind(&ChatService::addFriend, this, _1, _2, _3)});
-    _mhm.insert({CreateGroupMsg, std::bind(&ChatService::createGroup, this, _1, _2, _3)});
-    _mhm.insert({AddGroupMsg, std::bind(&ChatService::addGroup, this, _1, _2, _3)});
-    _mhm.insert({GroupChatMsg, std::bind(&ChatService::groupChat, this, _1, _2, _3)});
-    _mhm.insert({loginOutMsg, std::bind(&ChatService::loginout, this, _1, _2, _3)});
-    _mhm.insert({InitMsg, std::bind(&ChatService::init, this, _1, _2, _3)});
-    _mhm.insert({HistoryMsg, std::bind(&ChatService::history, this, _1, _2, _3)});
-    _mhm.insert({RemoveFriendMsg, std::bind(&ChatService::removeFriend, this, _1, _2, _3)});
-    _mhm.insert({RemoveGroupMsg, std::bind(&ChatService::removeGroup, this, _1, _2, _3)});
+    _mhm.insert(make_pair(LoginMsg, std::bind(&ChatService::login, this, _1, _2, _3)));
+    _mhm.insert(make_pair(RegMsg, std::bind(&ChatService::reg, this, _1, _2, _3)));
+    _mhm.insert(make_pair(OTOMsg, std::bind(&ChatService::otoChat, this, _1, _2, _3)));
+    _mhm.insert(make_pair(AddFriendMsg, std::bind(&ChatService::addFriend, this, _1, _2, _3)));
+    _mhm.insert(make_pair(CreateGroupMsg, std::bind(&ChatService::createGroup, this, _1, _2, _3)));
+    _mhm.insert(make_pair(AddGroupMsg, std::bind(&ChatService::addGroup, this, _1, _2, _3)));
+    _mhm.insert(make_pair(GroupChatMsg, std::bind(&ChatService::groupChat, this, _1, _2, _3)));
+    _mhm.insert(make_pair(loginOutMsg, std::bind(&ChatService::loginout, this, _1, _2, _3)));
+    _mhm.insert(make_pair(InitMsg, std::bind(&ChatService::init, this, _1, _2, _3)));
+    _mhm.insert(make_pair(HistoryMsg, std::bind(&ChatService::history, this, _1, _2, _3)));
+    _mhm.insert(make_pair(RemoveFriendMsg, std::bind(&ChatService::removeFriend, this, _1, _2, _3)));
+    _mhm.insert(make_pair(RemoveGroupMsg, std::bind(&ChatService::removeGroup, this, _1, _2, _3)));
 
-    _mhm.insert({NewMsg, std::bind(&ChatService::getNewMsg, this, _1, _2, _3)});
-    _mhm.insert({addNewMsgCnt, std::bind(&ChatService::addNewMsg, this, _1, _2, _3)});
-    _mhm.insert({removeNewMsgCnt, std::bind(&ChatService::removeNewMsg, this, _1, _2, _3)});
+    _mhm.insert(make_pair(NewMsg, std::bind(&ChatService::getNewMsg, this, _1, _2, _3)));
+    _mhm.insert(make_pair(addNewMsgCnt, std::bind(&ChatService::addNewMsg, this, _1, _2, _3)));
+    _mhm.insert(make_pair(removeNewMsgCnt, std::bind(&ChatService::removeNewMsg, this, _1, _2, _3)));
 
-    _mhm.insert({imageReq, std::bind(&ChatService::getImage, this, _1, _2, _3)});
+    _mhm.insert(make_pair(imageReq, std::bind(&ChatService::getImage, this, _1, _2, _3)));
 
     // 注册redis服务并且绑定回调函数
     if (_redis.connect())
@@ -83,7 +84,7 @@ MsgHandler ChatService::getHandler(int msgid)
     if (it == _mhm.end())
     {
         // 找不到就返回一个空的处理器, 该处理器可以返回提示信息
-        return [=](const TcpConnectionPtr &conn, json &js, Timestamp time)
+        return [=](const Session::Ptr &session, json &js, Timestamp time)
         {
             LOG_ERROR << "msgid:" << msgid << " can not find handler!";
         };
@@ -92,7 +93,7 @@ MsgHandler ChatService::getHandler(int msgid)
         return _mhm[msgid];
 }
 
-void ChatService::login(const TcpConnectionPtr &conn, json &js, Timestamp time)
+void ChatService::login(const Session::Ptr &session, json &js, Timestamp time)
 {
     string name = js["username"];
     string password = js["password"];
@@ -107,7 +108,7 @@ void ChatService::login(const TcpConnectionPtr &conn, json &js, Timestamp time)
             response["errmsg"] = "该用户已经登录, 不能重复登录";
             response["id"] = user.getId();
             response["errno"] = 1;
-            conn->send(response.dump());
+            session->send(response.dump());
             LOG_WARN << "[LOGIN] Failed: user " << user.getId() << " already online";
             return;
         }
@@ -118,7 +119,7 @@ void ChatService::login(const TcpConnectionPtr &conn, json &js, Timestamp time)
 
         {
             lock_guard<mutex> lock(_connMutex);
-            _userConnMap.insert({user.getId(), conn}); // 存在线程安全问题, 可能同时向map插入
+            _userConnMap.insert({user.getId(), session}); // 存在线程安全问题, 可能同时向map插入
         }
 
         // 登录成功订阅与该用户id相同的频道
@@ -131,7 +132,7 @@ void ChatService::login(const TcpConnectionPtr &conn, json &js, Timestamp time)
         response["id"] = user.getId();
         response["name"] = user.getName();
 
-        conn->send(response.dump());
+        session->send(response.dump());
         LOG_INFO << "[LOGIN] userId=" << user.getId() << " name=" << name;
     }
     else
@@ -141,26 +142,17 @@ void ChatService::login(const TcpConnectionPtr &conn, json &js, Timestamp time)
         response["msgid"] = LoginMsgAck;
         response["errno"] = 2; // 2
         response["errmsg"] = "用户不存在或密码错误";
-        conn->send(response.dump());
+        session->send(response.dump());
         LOG_WARN << "[LOGIN] Failed: invalid credentials for " << name;
     }
 }
 
-void ChatService::init(const TcpConnectionPtr &conn, json &js, Timestamp time)
+void ChatService::init(const Session::Ptr &session, json &js, Timestamp time)
 {
     int id = js["id"].get<int>();
 
     json response;
     response["msgid"] = InitMsgAck;
-
-    // // 查询离线消息, 有就传入
-    // vector<string> ret = _offlineMsgModel.query(id);
-    // if (!ret.empty())
-    // {
-    //     response["offlinemsg"] = ret;
-    //     // 把已经查到的信息删除
-    //     _offlineMsgModel.remove(id);
-    // }
 
     // 查询好友列表
     vector<string> friends = _friendModel.query(id);
@@ -176,10 +168,10 @@ void ChatService::init(const TcpConnectionPtr &conn, json &js, Timestamp time)
         response["groups"] = groups;
     }
 
-    conn->send(response.dump());
+    session->send(response.dump());
 }
 
-void ChatService::loginout(const TcpConnectionPtr &conn, json &js, Timestamp time)
+void ChatService::loginout(const Session::Ptr &session, json &js, Timestamp time)
 {
     int userid = js["id"].get<int>();
     // 更新状态
@@ -219,7 +211,7 @@ string ChatService::base64_decode(const std::string &encoded)
 }
 
 // 注册任务逻辑 : 填入name, password, 插入到数据库中
-void ChatService::reg(const TcpConnectionPtr &conn, json &js, Timestamp time)
+void ChatService::reg(const Session::Ptr &session, json &js, Timestamp time)
 {
     string name = js["username"];
     string password = js["password"];
@@ -236,7 +228,7 @@ void ChatService::reg(const TcpConnectionPtr &conn, json &js, Timestamp time)
         response["msgid"] = RegMsgAck;
         response["errno"] = 0;
         response["id"] = user.getId();
-        conn->send(response.dump());
+        session->send(response.dump());
 
         // 处理头像
         if (js.contains("avatar") && js["avatar"].is_string())
@@ -257,11 +249,11 @@ void ChatService::reg(const TcpConnectionPtr &conn, json &js, Timestamp time)
         response["msgid"] = RegMsgAck;
         response["errno"] = 1;
         response["errmsg"] = "用户已存在或输入非法!";
-        conn->send(response.dump());
+        session->send(response.dump());
     }
 }
 
-void ChatService::history(const TcpConnectionPtr &conn, json &js, Timestamp time)
+void ChatService::history(const Session::Ptr &session, json &js, Timestamp time)
 {
     bool flag = js["isgroup"].get<bool>();
     if (!flag)
@@ -275,7 +267,7 @@ void ChatService::history(const TcpConnectionPtr &conn, json &js, Timestamp time
         response["isgroup"] = flag;
         response["msgid"] = HistoryMsgAck;
         response["history"] = history;
-        conn->send(response.dump());
+        session->send(response.dump());
     }
     else
     {
@@ -291,11 +283,11 @@ void ChatService::history(const TcpConnectionPtr &conn, json &js, Timestamp time
         response["isgroup"] = flag;
         response["msgid"] = HistoryMsgAck;
         response["history"] = history;
-        conn->send(response.dump());
+        session->send(response.dump());
     }
 }
 
-void ChatService::otoChat(const TcpConnectionPtr &conn, json &js, Timestamp time)
+void ChatService::otoChat(const Session::Ptr &session, json &js, Timestamp time)
 {
     int id = js["id"].get<int>();
     int toid = js["to"].get<int>();
@@ -339,7 +331,7 @@ string ChatService::getChatKey(int id1, int id2)
         return to_string(id2) + "#" + to_string(id1);
 }
 
-void ChatService::addFriend(const TcpConnectionPtr &conn, json &js, Timestamp time)
+void ChatService::addFriend(const Session::Ptr &session, json &js, Timestamp time)
 {
     int userid = js["id"].get<int>();
     string friendname = js["friendname"];
@@ -356,25 +348,25 @@ void ChatService::addFriend(const TcpConnectionPtr &conn, json &js, Timestamp ti
         LOG_INFO << "[FRIEND] " << userid << " added " << friendname;
         response["errno"] = 0;
         response["errmsg"] = "添加好友成功";
-        conn->send(response.dump());
+        session->send(response.dump());
     }
     else if (ret == 1)
     {
         LOG_WARN << "[FRIEND] Failed: " << friendname << " not found";
         response["errno"] = 1;
         response["errmsg"] = "该用户不存在";
-        conn->send(response.dump());
+        session->send(response.dump());
     }
     else
     {
         LOG_WARN << "[FRIEND] Failed: " << friendname << " already friend";
         response["errno"] = 2;
         response["errmsg"] = "该用户已经是你的好友";
-        conn->send(response.dump());
+        session->send(response.dump());
     }
 }
 
-void ChatService::createGroup(const TcpConnectionPtr &conn, json &js, Timestamp time)
+void ChatService::createGroup(const Session::Ptr &session, json &js, Timestamp time)
 {
     string name = js["groupname"];
     int creatorid = js["userid"].get<int>();
@@ -390,18 +382,18 @@ void ChatService::createGroup(const TcpConnectionPtr &conn, json &js, Timestamp 
         response["errmsg"] = "群组创建成功";
         response["groupid"] = id;
         response["groupname"] = name;
-        conn->send(response.dump());
+        session->send(response.dump());
     }
     else
     {
         LOG_ERROR << "[GROUP] Failed to create: " << name;
         response["errno"] = 1;
         response["errmsg"] = "群组创建失败";
-        conn->send(response.dump());
+        session->send(response.dump());
     }
 }
 
-void ChatService::addGroup(const TcpConnectionPtr &conn, json &js, Timestamp time)
+void ChatService::addGroup(const Session::Ptr &session, json &js, Timestamp time)
 {
     string gname = js["groupname"];
     int uid = js["userid"].get<int>();
@@ -423,18 +415,18 @@ void ChatService::addGroup(const TcpConnectionPtr &conn, json &js, Timestamp tim
         response["errmsg"] = "群组添加成功";
         response["groupname"] = gname;
         response["groupid"] = gid;
-        conn->send(response.dump());
+        session->send(response.dump());
     }
     else
     {
         LOG_WARN << "[GROUP] Failed: " << uid << " join " << gname;
         response["errno"] = 1;
         response["errmsg"] = "群组添加失败";
-        conn->send(response.dump());
+        session->send(response.dump());
     }
 }
 
-void ChatService::groupChat(const TcpConnectionPtr &conn, json &js, Timestamp time)
+void ChatService::groupChat(const Session::Ptr &session, json &js, Timestamp time)
 {
     int gid = js["groupid"].get<int>();
     int uid = js["userid"].get<int>();
@@ -474,14 +466,14 @@ void ChatService::groupChat(const TcpConnectionPtr &conn, json &js, Timestamp ti
              << " (local:" << localCnt << " redis:" << redisCnt << " offline:" << offlineCnt << ")";
 }
 
-void ChatService::clientCloseException(const TcpConnectionPtr &conn)
+void ChatService::clientCloseException(const Session::Ptr &session)
 {
     User user;
     {
         lock_guard<mutex> lock(_connMutex);
         for (auto e : _userConnMap)
         {
-            if (e.second == conn)
+            if (e.second == session)
             {
                 // 从map中删除用户的连接信息, 更新数据库中的状态信息
                 user.setId(e.first);
@@ -508,7 +500,7 @@ void ChatService::reset()
     _userModel.resetState();
 }
 
-void ChatService::removeFriend(const TcpConnectionPtr &conn, json &js, Timestamp time)
+void ChatService::removeFriend(const Session::Ptr &session, json &js, Timestamp time)
 {
     cout << "触发removeFriend" << endl;
     int id = js["userid"].get<int>();
@@ -522,7 +514,7 @@ void ChatService::removeFriend(const TcpConnectionPtr &conn, json &js, Timestamp
     _messageModel.remove(getChatKey(id, fid));
 }
 
-void ChatService::removeGroup(const TcpConnectionPtr &conn, json &js, Timestamp time)
+void ChatService::removeGroup(const Session::Ptr &session, json &js, Timestamp time)
 {
     // 先判断这个用户是否是群组的creator, 是的话移除群组, 否则移除用户
     int id = js["userid"].get<int>();
@@ -544,7 +536,7 @@ void ChatService::removeGroup(const TcpConnectionPtr &conn, json &js, Timestamp 
         _messageModel.remove(to_string(gid));
 }
 
-void ChatService::getNewMsg(const TcpConnectionPtr &conn, json &js, Timestamp time)
+void ChatService::getNewMsg(const Session::Ptr &session, json &js, Timestamp time)
 {
     cout << "触发getNewMsg" << endl;
     int userid = js["userid"].get<int>();
@@ -568,10 +560,10 @@ void ChatService::getNewMsg(const TcpConnectionPtr &conn, json &js, Timestamp ti
     response["msgid"] = NewMsgAck;
     response["cnt"] = cnt;
     response["name"] = name;
-    conn->send(response.dump());
+    session->send(response.dump());
 }
 
-void ChatService::addNewMsg(const TcpConnectionPtr &conn, json &js, Timestamp time)
+void ChatService::addNewMsg(const Session::Ptr &session, json &js, Timestamp time)
 {
     int userid = js["userid"].get<int>();
     int sender = js["sender"].get<int>();
@@ -586,7 +578,7 @@ void ChatService::addNewMsg(const TcpConnectionPtr &conn, json &js, Timestamp ti
     _newMsgModel.addNewMsgByKey(key);
 }
 
-void ChatService::removeNewMsg(const TcpConnectionPtr &conn, json &js, Timestamp time)
+void ChatService::removeNewMsg(const Session::Ptr &session, json &js, Timestamp time)
 {
     int userid = js["userid"].get<int>();
     int sender = js["sender"].get<int>();
@@ -601,7 +593,7 @@ void ChatService::removeNewMsg(const TcpConnectionPtr &conn, json &js, Timestamp
     _newMsgModel.removeNewMsgByKey(key);
 }
 
-void ChatService::getImage(const TcpConnectionPtr &conn, json &js, Timestamp time)
+void ChatService::getImage(const Session::Ptr &session, json &js, Timestamp time)
 {
     int userid = js["userid"].get<int>();
     cout << "已发送" << userid << "的头像" << endl;
@@ -614,11 +606,11 @@ void ChatService::getImage(const TcpConnectionPtr &conn, json &js, Timestamp tim
     if (base64_image.empty())
     {
         response["isSuccess"] = "false";
-        conn->send(response.dump());
+        session->send(response.dump());
         return;
     }
 
     response["isSuccess"] = "true";
     response["image_data"] = base64_image;
-    conn->send(response.dump());
+    session->send(response.dump());
 }

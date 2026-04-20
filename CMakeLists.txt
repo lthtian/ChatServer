@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.0)
 project(chat)
 
 # 配置编译选项
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} -g)
 
 # 配置可执行文件的输出路径
@@ -16,6 +18,10 @@ else()
     message(FATAL_ERROR "OpenCV not found")
 endif()
 
+# 查找 Boost (Asio + 协程支持)
+find_package(Boost 1.82 REQUIRED COMPONENTS system)
+include_directories(${Boost_INCLUDE_DIRS})
+
 # 配置头文件的搜索路径
 include_directories(${PROJECT_SOURCE_DIR}/include)
 include_directories(${PROJECT_SOURCE_DIR}/include/server)
@@ -23,9 +29,6 @@ include_directories(${PROJECT_SOURCE_DIR}/include/server/db)
 include_directories(${PROJECT_SOURCE_DIR}/include/server/model)
 include_directories(${PROJECT_SOURCE_DIR}/include/server/redis)
 include_directories(${PROJECT_SOURCE_DIR}/thirdparty)
-
-include_directories(/usr/local/include)
-link_directories(/usr/local/lib)
 
 # 先加载子目录
 add_subdirectory(src)

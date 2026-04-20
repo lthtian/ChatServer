@@ -1,27 +1,17 @@
 #include "chatserver.hpp"
 #include "chatservice.hpp"
-#include "json.hpp"
-
-#include <functional>
-#include <string>
 #include <iostream>
 using namespace std;
-using namespace placeholders;
-using json = nlohmann::json;
 
-ChatServer::ChatServer(EventLoop *loop, const InetAddress &listenAddr, const string &nameArg)
-    : _server(loop, listenAddr, nameArg), _loop(loop), _workerPool(nullptr)
+ChatServer::ChatServer(asio::io_context &ioc, const std::string &ip, uint16_t port)
+    : ioc_(ioc),
+      acceptor_(ioc, tcp::endpoint(asio::ip::make_address(ip), port)),
+      _workerPool(nullptr)
 {
-    // 绑定连接建立/断开时的处理服务
-    _server.setConnectionCallback(std::bind(&ChatServer::onConnection, this, _1));
-    // 绑定发生消息读写时的处理服务
-    _server.setMessageCallback(std::bind(&ChatServer::onMessage, this, _1, _2, _3));
-    _server.setThreadNum(2);  // IO线程数
-
     // 创建业务线程池（线程数 = CPU核心数 - 2，至少保留2个给IO线程）
     int workerThreadNum = std::thread::hardware_concurrency() - 2;
     if (workerThreadNum < 4) {
-        workerThreadNum = 4;  // 最少4个业务线程
+        workerThreadNum = 4;
     }
     _workerPool = new WorkerThreadPool(workerThreadNum, _taskQueue);
     cout << "Business thread pool started with " << workerThreadNum << " threads." << endl;
@@ -29,102 +19,44 @@ ChatServer::ChatServer(EventLoop *loop, const InetAddress &listenAddr, const str
 
 ChatServer::~ChatServer()
 {
-    // 先关闭业务线程池，等待所有任务完成
     if (_workerPool) {
         _workerPool->shutdown();
         delete _workerPool;
         _workerPool = nullptr;
     }
+
+    boost::system::error_code ec;
+    acceptor_.close(ec);
 }
 
 void ChatServer::start()
 {
-    _server.start();
+    asio::co_spawn(ioc_, do_accept(), asio::detached);
 }
 
-void ChatServer::onConnection(const TcpConnectionPtr &conn) // 连接回调函数指定一个参数
+asio::awaitable<void> ChatServer::do_accept()
 {
-    if (!conn->connected())
+    while (true)
     {
-        // 这里可以检测到异常断开的情况
-        // 可以调用业务层的接口，进行用户下线操作
-        ChatService::instance()->clientCloseException(conn);
-        conn->shutdown();
-    }
-}
+        auto socket = co_await acceptor_.async_accept(asio::use_awaitable);
 
-void ChatServer::onMessage(const TcpConnectionPtr &conn, Buffer *buffer, Timestamp time)
-{
-    std::string buf = buffer->retrieveAllAsString();
-    _recvBuffers[conn] += buf; // 追加到连接的缓冲区
-
-    std::string &recvBuf = _recvBuffers[conn];
-    size_t start_pos = 0;
-    int brace_count = 0;
-    bool in_string = false;
-
-    for (size_t i = 0; i < recvBuf.size(); ++i)
-    {
-        char c = recvBuf[i];
-        if (c == '"')
-        {
-            // 检查前面的转义符数量是否为偶数
-            int backslashCount = 0;
-            size_t j = i;
-            while (j > 0 && recvBuf[j - 1] == '\\')
-            {
-                backslashCount++;
-                j--;
+        auto session = std::make_shared<Session>(
+            std::move(socket),
+            // MessageCallback: 解析消息并投递到业务线程池
+            [this](const Session::Ptr &s, json js) {
+                auto handler = ChatService::instance()->getHandler(js["msgid"].get<int>());
+                Task task;
+                task.session = s;
+                task.js = std::move(js);
+                task.time = std::chrono::steady_clock::now();
+                task.handler = handler;
+                _taskQueue.push(task);
+            },
+            // CloseCallback: 连接断开时通知业务层
+            [](const Session::Ptr &s) {
+                ChatService::instance()->clientCloseException(s);
             }
-            if (backslashCount % 2 == 0)
-            { // 未被转义
-                in_string = !in_string;
-            }
-        }
-
-        if (!in_string)
-        {
-            if (c == '{')
-            {
-                brace_count++;
-            }
-            else if (c == '}')
-            {
-                brace_count--;
-                if (brace_count == 0)
-                {
-                    // 提取当前JSON对象
-                    std::string json_str = recvBuf.substr(start_pos, i - start_pos + 1);
-                    start_pos = i + 1;
-
-                    try
-                    {
-                        nlohmann::json js = nlohmann::json::parse(json_str);
-                        auto msgHandler = ChatService::instance()->getHandler(js["msgid"].get<int>());
-
-                        // 将任务投递到业务线程池，IO线程立即返回处理其他连接
-                        Task task;
-                        task.conn = conn;
-                        task.js = js;
-                        task.time = time;
-                        task.handler = msgHandler;
-                        _taskQueue.push(task);
-                    }
-                    catch (const std::exception &e)
-                    {
-                        std::cerr << "JSON error: " << e.what() << std::endl;
-                        // conn->shutdown();
-                        _recvBuffers.erase(conn);
-                        return;
-                    }
-                }
-            }
-        }
-    }
-
-    // 保留未处理的数据
-    if (start_pos > 0)
-    {
-        recvBuf = (start_pos < recvBuf.size()) ? recvBuf.substr(start_pos) : "";
+        );
+        session->start();
     }
 }
