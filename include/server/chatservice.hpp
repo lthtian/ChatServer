@@ -2,6 +2,7 @@
 
 // 业务模块(单例模式)
 #include "session.hpp"
+#include <boost/asio.hpp>
 #include <unordered_map>
 #include <functional>
 #include <mutex>
@@ -20,12 +21,38 @@ using json = nlohmann::json;
 #include "imagemodel.hpp"
 #include "redis.hpp"
 
+namespace asio = boost::asio;
+
 // Timestamp类型替代muduo::Timestamp
 using Timestamp = std::chrono::steady_clock::time_point;
 
-// 表示处理消息的事件回调方法类型
+// 全局数据库线程池（替代 WorkerThreadPool，用于包装阻塞 DB 操作）
+inline asio::thread_pool& db_pool() {
+    static asio::thread_pool pool(4);
+    return pool;
+}
+
+// 将阻塞函数投递到 db_pool 线程池执行并 co_await 结果
+template<typename Func>
+auto run_on_db(Func func) -> asio::awaitable<decltype(func())> {
+    using R = decltype(func());
+    co_return co_await asio::co_spawn(
+        db_pool().get_executor(),
+        [f = std::move(func)]() mutable -> asio::awaitable<R> {
+            if constexpr (std::is_void_v<R>) {
+                f();
+                co_return;
+            } else {
+                co_return f();
+            }
+        },
+        asio::use_awaitable
+    );
+}
+
+// 表示处理消息的事件回调方法类型（协程化）
 // 只要是给网络层的回调函数就必须符合这个函数签名
-using MsgHandler = std::function<void(const Session::Ptr &session, json &js, Timestamp time)>;
+using MsgHandler = std::function<asio::awaitable<void>(const Session::Ptr &session, json js, Timestamp time)>;
 
 class ChatService
 {
@@ -41,39 +68,39 @@ public:
     // 处理消息队列中有订阅的情况
     void handleRedisSubscribeMessage(int, string);
 
-    // 以下编写各种业务处理回调函数
+    // 以下编写各种业务处理协程函数
     // 处理登录业务
-    void login(const Session::Ptr &session, json &js, Timestamp time);
+    asio::awaitable<void> login(const Session::Ptr &session, json js, Timestamp time);
     // 处理注销业务
-    void loginout(const Session::Ptr &session, json &js, Timestamp time);
+    asio::awaitable<void> loginout(const Session::Ptr &session, json js, Timestamp time);
     // 处理注册业务
-    void reg(const Session::Ptr &session, json &js, Timestamp time);
+    asio::awaitable<void> reg(const Session::Ptr &session, json js, Timestamp time);
     // 处理一对一聊天业务
-    void otoChat(const Session::Ptr &session, json &js, Timestamp time);
+    asio::awaitable<void> otoChat(const Session::Ptr &session, json js, Timestamp time);
     // 处理好友注册服务
-    void addFriend(const Session::Ptr &session, json &js, Timestamp time);
+    asio::awaitable<void> addFriend(const Session::Ptr &session, json js, Timestamp time);
     // 处理创建群组的任务
-    void createGroup(const Session::Ptr &session, json &js, Timestamp time);
+    asio::awaitable<void> createGroup(const Session::Ptr &session, json js, Timestamp time);
     // 处理加入群组的任务
-    void addGroup(const Session::Ptr &session, json &js, Timestamp time);
+    asio::awaitable<void> addGroup(const Session::Ptr &session, json js, Timestamp time);
     // 处理群组聊天业务
-    void groupChat(const Session::Ptr &session, json &js, Timestamp time);
+    asio::awaitable<void> groupChat(const Session::Ptr &session, json js, Timestamp time);
     // 处理前端界面初始化问题
-    void init(const Session::Ptr &session, json &js, Timestamp time);
+    asio::awaitable<void> init(const Session::Ptr &session, json js, Timestamp time);
     // 处理获取历史信息
-    void history(const Session::Ptr &session, json &js, Timestamp time);
+    asio::awaitable<void> history(const Session::Ptr &session, json js, Timestamp time);
     // 处理移除好友服务
-    void removeFriend(const Session::Ptr &session, json &js, Timestamp time);
+    asio::awaitable<void> removeFriend(const Session::Ptr &session, json js, Timestamp time);
     // 处理移除群组服务
-    void removeGroup(const Session::Ptr &session, json &js, Timestamp time);
+    asio::awaitable<void> removeGroup(const Session::Ptr &session, json js, Timestamp time);
     // 处理未读消息服务
-    void getNewMsg(const Session::Ptr &session, json &js, Timestamp time);
+    asio::awaitable<void> getNewMsg(const Session::Ptr &session, json js, Timestamp time);
     // 增加未读消息数
-    void addNewMsg(const Session::Ptr &session, json &js, Timestamp time);
+    asio::awaitable<void> addNewMsg(const Session::Ptr &session, json js, Timestamp time);
     // 移除未读消息数
-    void removeNewMsg(const Session::Ptr &session, json &js, Timestamp time);
+    asio::awaitable<void> removeNewMsg(const Session::Ptr &session, json js, Timestamp time);
     // 返回头像图片
-    void getImage(const Session::Ptr &session, json &js, Timestamp time);
+    asio::awaitable<void> getImage(const Session::Ptr &session, json js, Timestamp time);
 
 private:
     // 在此绑定消息类型对应处理函数

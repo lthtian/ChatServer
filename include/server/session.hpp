@@ -17,7 +17,7 @@ class Session : public std::enable_shared_from_this<Session>
 {
 public:
     using Ptr = std::shared_ptr<Session>;
-    using MessageCallback = std::function<void(const Ptr &, json)>;
+    using MessageCallback = std::function<asio::awaitable<void>(const Ptr &, json)>;
     using CloseCallback = std::function<void(const Ptr &)>;
 
     Session(tcp::socket socket, MessageCallback msgCb, CloseCallback closeCb);

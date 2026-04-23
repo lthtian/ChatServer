@@ -5,7 +5,6 @@
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 using namespace std;
-using namespace std::placeholders;
 
 ChatService *ChatService::instance()
 {
@@ -14,50 +13,79 @@ ChatService *ChatService::instance()
 }
 
 ChatService::ChatService()
-  {
-      // 初始化数据库连接池
-      DBConfig dbConfig;
-      dbConfig.server = "127.0.0.1";
-      dbConfig.user = "lth";
-      dbConfig.password = "040915lLth!";
-      dbConfig.dbname = "chat";
-      dbConfig.port = 3306;
+{
+    // 初始化数据库连接池
+    DBConfig dbConfig;
+    dbConfig.server = "127.0.0.1";
+    dbConfig.user = "lth";
+    dbConfig.password = "040915lLth!";
+    dbConfig.dbname = "chat";
+    dbConfig.port = 3306;
 
-      LOG_INFO << "Initializing MySQL connection pool: server=" << dbConfig.server
-               << ", user=" << dbConfig.user
-               << ", dbname=" << dbConfig.dbname;
+    LOG_INFO << "Initializing MySQL connection pool: server=" << dbConfig.server
+             << ", user=" << dbConfig.user
+             << ", dbname=" << dbConfig.dbname;
 
-      // 连接数 = 业务线程数 + 2（默认10个连接）
-      int connectionCount = 10;
-      ConnectionPool::instance()->init(dbConfig, connectionCount);
+    int connectionCount = 10;
+    ConnectionPool::instance()->init(dbConfig, connectionCount);
 
-      int availableCount = ConnectionPool::instance()->getAvailableCount();
-      LOG_INFO << "Database connection pool initialized. Available connections: " << availableCount;
+    int availableCount = ConnectionPool::instance()->getAvailableCount();
+    LOG_INFO << "Database connection pool initialized. Available connections: " << availableCount;
 
-    // 为每个消息类型注册对应的业务代码
-    _mhm.insert(make_pair(LoginMsg, std::bind(&ChatService::login, this, _1, _2, _3)));
-    _mhm.insert(make_pair(RegMsg, std::bind(&ChatService::reg, this, _1, _2, _3)));
-    _mhm.insert(make_pair(OTOMsg, std::bind(&ChatService::otoChat, this, _1, _2, _3)));
-    _mhm.insert(make_pair(AddFriendMsg, std::bind(&ChatService::addFriend, this, _1, _2, _3)));
-    _mhm.insert(make_pair(CreateGroupMsg, std::bind(&ChatService::createGroup, this, _1, _2, _3)));
-    _mhm.insert(make_pair(AddGroupMsg, std::bind(&ChatService::addGroup, this, _1, _2, _3)));
-    _mhm.insert(make_pair(GroupChatMsg, std::bind(&ChatService::groupChat, this, _1, _2, _3)));
-    _mhm.insert(make_pair(loginOutMsg, std::bind(&ChatService::loginout, this, _1, _2, _3)));
-    _mhm.insert(make_pair(InitMsg, std::bind(&ChatService::init, this, _1, _2, _3)));
-    _mhm.insert(make_pair(HistoryMsg, std::bind(&ChatService::history, this, _1, _2, _3)));
-    _mhm.insert(make_pair(RemoveFriendMsg, std::bind(&ChatService::removeFriend, this, _1, _2, _3)));
-    _mhm.insert(make_pair(RemoveGroupMsg, std::bind(&ChatService::removeGroup, this, _1, _2, _3)));
-
-    _mhm.insert(make_pair(NewMsg, std::bind(&ChatService::getNewMsg, this, _1, _2, _3)));
-    _mhm.insert(make_pair(addNewMsgCnt, std::bind(&ChatService::addNewMsg, this, _1, _2, _3)));
-    _mhm.insert(make_pair(removeNewMsgCnt, std::bind(&ChatService::removeNewMsg, this, _1, _2, _3)));
-
-    _mhm.insert(make_pair(imageReq, std::bind(&ChatService::getImage, this, _1, _2, _3)));
+    // 为每个消息类型注册对应的协程 handler
+    _mhm.emplace(LoginMsg, [this](const Session::Ptr &s, json j, Timestamp t) -> asio::awaitable<void> {
+        co_return co_await this->login(s, std::move(j), t);
+    });
+    _mhm.emplace(RegMsg, [this](const Session::Ptr &s, json j, Timestamp t) -> asio::awaitable<void> {
+        co_return co_await this->reg(s, std::move(j), t);
+    });
+    _mhm.emplace(OTOMsg, [this](const Session::Ptr &s, json j, Timestamp t) -> asio::awaitable<void> {
+        co_return co_await this->otoChat(s, std::move(j), t);
+    });
+    _mhm.emplace(AddFriendMsg, [this](const Session::Ptr &s, json j, Timestamp t) -> asio::awaitable<void> {
+        co_return co_await this->addFriend(s, std::move(j), t);
+    });
+    _mhm.emplace(CreateGroupMsg, [this](const Session::Ptr &s, json j, Timestamp t) -> asio::awaitable<void> {
+        co_return co_await this->createGroup(s, std::move(j), t);
+    });
+    _mhm.emplace(AddGroupMsg, [this](const Session::Ptr &s, json j, Timestamp t) -> asio::awaitable<void> {
+        co_return co_await this->addGroup(s, std::move(j), t);
+    });
+    _mhm.emplace(GroupChatMsg, [this](const Session::Ptr &s, json j, Timestamp t) -> asio::awaitable<void> {
+        co_return co_await this->groupChat(s, std::move(j), t);
+    });
+    _mhm.emplace(loginOutMsg, [this](const Session::Ptr &s, json j, Timestamp t) -> asio::awaitable<void> {
+        co_return co_await this->loginout(s, std::move(j), t);
+    });
+    _mhm.emplace(InitMsg, [this](const Session::Ptr &s, json j, Timestamp t) -> asio::awaitable<void> {
+        co_return co_await this->init(s, std::move(j), t);
+    });
+    _mhm.emplace(HistoryMsg, [this](const Session::Ptr &s, json j, Timestamp t) -> asio::awaitable<void> {
+        co_return co_await this->history(s, std::move(j), t);
+    });
+    _mhm.emplace(RemoveFriendMsg, [this](const Session::Ptr &s, json j, Timestamp t) -> asio::awaitable<void> {
+        co_return co_await this->removeFriend(s, std::move(j), t);
+    });
+    _mhm.emplace(RemoveGroupMsg, [this](const Session::Ptr &s, json j, Timestamp t) -> asio::awaitable<void> {
+        co_return co_await this->removeGroup(s, std::move(j), t);
+    });
+    _mhm.emplace(NewMsg, [this](const Session::Ptr &s, json j, Timestamp t) -> asio::awaitable<void> {
+        co_return co_await this->getNewMsg(s, std::move(j), t);
+    });
+    _mhm.emplace(addNewMsgCnt, [this](const Session::Ptr &s, json j, Timestamp t) -> asio::awaitable<void> {
+        co_return co_await this->addNewMsg(s, std::move(j), t);
+    });
+    _mhm.emplace(removeNewMsgCnt, [this](const Session::Ptr &s, json j, Timestamp t) -> asio::awaitable<void> {
+        co_return co_await this->removeNewMsg(s, std::move(j), t);
+    });
+    _mhm.emplace(imageReq, [this](const Session::Ptr &s, json j, Timestamp t) -> asio::awaitable<void> {
+        co_return co_await this->getImage(s, std::move(j), t);
+    });
 
     // 注册redis服务并且绑定回调函数
     if (_redis.connect())
     {
-        _redis.init_notify_handler(std::bind(&ChatService::handleRedisSubscribeMessage, this, _1, _2));
+        _redis.init_notify_handler(std::bind(&ChatService::handleRedisSubscribeMessage, this, std::placeholders::_1, std::placeholders::_2));
     }
 }
 
@@ -83,26 +111,26 @@ MsgHandler ChatService::getHandler(int msgid)
     auto it = _mhm.find(msgid);
     if (it == _mhm.end())
     {
-        // 找不到就返回一个空的处理器, 该处理器可以返回提示信息
-        return [=](const Session::Ptr &session, json &js, Timestamp time)
+        return [=](const Session::Ptr &, json, Timestamp) -> asio::awaitable<void>
         {
             LOG_ERROR << "msgid:" << msgid << " can not find handler!";
+            co_return;
         };
     }
     else
         return _mhm[msgid];
 }
 
-void ChatService::login(const Session::Ptr &session, json &js, Timestamp time)
+asio::awaitable<void> ChatService::login(const Session::Ptr &session, json js, Timestamp time)
 {
     string name = js["username"];
     string password = js["password"];
-    User user = _userModel.query(name);
+    User user = co_await run_on_db([this, name]() { return _userModel.query(name); });
+
     if (user.getName() == name && user.getPwd() == password)
     {
         if (user.getState() == "online")
         {
-            // 该用户已经登录, 不能重复登录
             json response;
             response["msgid"] = LoginMsgAck;
             response["errmsg"] = "该用户已经登录, 不能重复登录";
@@ -110,22 +138,19 @@ void ChatService::login(const Session::Ptr &session, json &js, Timestamp time)
             response["errno"] = 1;
             session->send(response.dump());
             LOG_WARN << "[LOGIN] Failed: user " << user.getId() << " already online";
-            return;
+            co_return;
         }
 
-        // 登录成功, 更新状态, 记录连接信息
         user.setState("online");
-        _userModel.updateState(user);
+        co_await run_on_db([this, user]() mutable { _userModel.updateState(user); });
 
         {
             lock_guard<mutex> lock(_connMutex);
-            _userConnMap.insert({user.getId(), session}); // 存在线程安全问题, 可能同时向map插入
+            _userConnMap.insert({user.getId(), session});
         }
 
-        // 登录成功订阅与该用户id相同的频道
         _redis.subscribe(user.getId());
 
-        // 登录只需要id和name
         json response;
         response["msgid"] = LoginMsgAck;
         response["errno"] = 0;
@@ -137,32 +162,29 @@ void ChatService::login(const Session::Ptr &session, json &js, Timestamp time)
     }
     else
     {
-        // 用户不存在或密码错误
         json response;
         response["msgid"] = LoginMsgAck;
-        response["errno"] = 2; // 2
+        response["errno"] = 2;
         response["errmsg"] = "用户不存在或密码错误";
         session->send(response.dump());
         LOG_WARN << "[LOGIN] Failed: invalid credentials for " << name;
     }
 }
 
-void ChatService::init(const Session::Ptr &session, json &js, Timestamp time)
+asio::awaitable<void> ChatService::init(const Session::Ptr &session, json js, Timestamp time)
 {
     int id = js["id"].get<int>();
 
     json response;
     response["msgid"] = InitMsgAck;
 
-    // 查询好友列表
-    vector<string> friends = _friendModel.query(id);
+    vector<string> friends = co_await run_on_db([this, id]() { return _friendModel.query(id); });
     if (!friends.empty())
     {
         response["friends"] = friends;
     }
 
-    // 查询群组列表
-    vector<string> groups = _groupModel.queryGroups(id);
+    vector<string> groups = co_await run_on_db([this, id]() { return _groupModel.queryGroups(id); });
     if (!groups.empty())
     {
         response["groups"] = groups;
@@ -171,14 +193,12 @@ void ChatService::init(const Session::Ptr &session, json &js, Timestamp time)
     session->send(response.dump());
 }
 
-void ChatService::loginout(const Session::Ptr &session, json &js, Timestamp time)
+asio::awaitable<void> ChatService::loginout(const Session::Ptr &session, json js, Timestamp time)
 {
     int userid = js["id"].get<int>();
-    // 更新状态
     User user(userid, "", "", "offline");
-    _userModel.updateState(user);
+    co_await run_on_db([this, user]() mutable { _userModel.updateState(user); });
 
-    // 删除连接信息
     {
         lock_guard<mutex> lock(_connMutex);
         auto it = _userConnMap.find(userid);
@@ -186,7 +206,6 @@ void ChatService::loginout(const Session::Ptr &session, json &js, Timestamp time
             _userConnMap.erase(userid);
     }
 
-    // 退订
     _redis.unsubscribe(userid);
     LOG_INFO << "[LOGOUT] userId=" << userid;
 }
@@ -200,7 +219,7 @@ string ChatService::base64_decode(const std::string &encoded)
     b64 = BIO_new(BIO_f_base64());
     bio = BIO_new_mem_buf(encoded.data(), encoded.size());
     bio = BIO_push(b64, bio);
-    BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL); // 避免换行问题
+    BIO_set_flags(bio, BIO_FLAGS_BASE64_NO_NL);
 
     int decoded_len = BIO_read(bio, buffer, encoded.size());
     std::string result(buffer, decoded_len);
@@ -210,36 +229,35 @@ string ChatService::base64_decode(const std::string &encoded)
     return result;
 }
 
-// 注册任务逻辑 : 填入name, password, 插入到数据库中
-void ChatService::reg(const Session::Ptr &session, json &js, Timestamp time)
+asio::awaitable<void> ChatService::reg(const Session::Ptr &session, json js, Timestamp time)
 {
     string name = js["username"];
     string password = js["password"];
 
-    User user;
-    user.setName(name);
-    user.setPwd(password);
-    bool ret = _userModel.insert(user);
+    // insert 会修改 user 的 id（自增ID），需要返回修改后的 user
+    auto [ret, insertedUser] = co_await run_on_db([this, name, password]() mutable -> pair<bool, User> {
+        User user;
+        user.setName(name);
+        user.setPwd(password);
+        bool r = _userModel.insert(user);
+        return {r, user};
+    });
 
     if (ret)
     {
-        LOG_INFO << "[REGISTER] Success: " << name << " (userId:" << user.getId() << ")";
+        LOG_INFO << "[REGISTER] Success: " << name << " (userId:" << insertedUser.getId() << ")";
         json response;
         response["msgid"] = RegMsgAck;
         response["errno"] = 0;
-        response["id"] = user.getId();
+        response["id"] = insertedUser.getId();
         session->send(response.dump());
 
-        // 处理头像
         if (js.contains("avatar") && js["avatar"].is_string())
         {
             string avatar_base64 = js["avatar"];
-
-            // 解码Base64
             string avatar_binary = base64_decode(avatar_base64);
-
-            // 存入数据库前压缩图片
-            _imageModel.insert(user.getId(), avatar_binary);
+            int uid = insertedUser.getId();
+            co_await run_on_db([this, uid, avatar_binary]() { _imageModel.insert(uid, avatar_binary); });
         }
     }
     else
@@ -253,73 +271,64 @@ void ChatService::reg(const Session::Ptr &session, json &js, Timestamp time)
     }
 }
 
-void ChatService::history(const Session::Ptr &session, json &js, Timestamp time)
+asio::awaitable<void> ChatService::history(const Session::Ptr &session, json js, Timestamp time)
 {
     bool flag = js["isgroup"].get<bool>();
     if (!flag)
     {
-        // 接收两个id, 转化为chatkey, 向数据库查询, 查询结果返回给客户端
         int id1 = js["id1"].get<int>();
         int id2 = js["id2"].get<int>();
-        vector<string> history = _messageModel.query(getChatKey(id1, id2));
+        vector<string> hist = co_await run_on_db([this, key = getChatKey(id1, id2)]() { return _messageModel.query(key); });
 
         json response;
         response["isgroup"] = flag;
         response["msgid"] = HistoryMsgAck;
-        response["history"] = history;
+        response["history"] = hist;
         session->send(response.dump());
     }
     else
     {
         int groupid = js["groupid"].get<int>();
-        vector<string> history = _messageModel.query(to_string(groupid));
-
-        if (flag)
-            cout << "已发送true" << endl;
-        else
-            cout << "已发送false" << endl;
+        vector<string> hist = co_await run_on_db([this, groupid]() { return _messageModel.query(to_string(groupid)); });
 
         json response;
         response["isgroup"] = flag;
         response["msgid"] = HistoryMsgAck;
-        response["history"] = history;
+        response["history"] = hist;
         session->send(response.dump());
     }
 }
 
-void ChatService::otoChat(const Session::Ptr &session, json &js, Timestamp time)
+asio::awaitable<void> ChatService::otoChat(const Session::Ptr &session, json js, Timestamp time)
 {
     int id = js["id"].get<int>();
     int toid = js["to"].get<int>();
     string msg = js["message"].get<string>();
+    string chatkey = getChatKey(id, toid);
 
-    // 不管在不在线, 都将消息插入到数据库中
-    _messageModel.insert(getChatKey(id, toid), false, id, msg);
+    co_await run_on_db([this, chatkey, id, msg]() { _messageModel.insert(chatkey, false, id, msg); });
 
-    // 查询toid是否在线
     {
         lock_guard<mutex> lock(_connMutex);
         auto it = _userConnMap.find(toid);
         if (it != _userConnMap.end())
         {
-            // toid在线, 发送消息
             it->second->send(js.dump());
             LOG_INFO << "[CHAT] " << id << " -> " << toid << " (oto, local)";
-            return;
+            co_return;
         }
     }
 
-    // 向数据库查询该用户是否在线, 在线说明在不同服务器, 发布订阅
-    if (_userModel.queryState(toid) == "online")
+    string state = co_await run_on_db([this, toid]() { return _userModel.queryState(toid); });
+    if (state == "online")
     {
         _redis.publish(toid, js.dump());
         LOG_INFO << "[CHAT] " << id << " -> " << toid << " (oto, redis)";
-        return;
+        co_return;
     }
 
-    // 走到这里说明用户不在线, 未读消息+1
     string key = to_string(toid) + "-" + to_string(id);
-    _newMsgModel.addNewMsgByKey(key);
+    co_await run_on_db([this, key]() { _newMsgModel.addNewMsgByKey(key); });
     LOG_INFO << "[CHAT] " << id << " -> " << toid << " (oto, offline)";
 }
 
@@ -331,7 +340,7 @@ string ChatService::getChatKey(int id1, int id2)
         return to_string(id2) + "#" + to_string(id1);
 }
 
-void ChatService::addFriend(const Session::Ptr &session, json &js, Timestamp time)
+asio::awaitable<void> ChatService::addFriend(const Session::Ptr &session, json js, Timestamp time)
 {
     int userid = js["id"].get<int>();
     string friendname = js["friendname"];
@@ -339,10 +348,11 @@ void ChatService::addFriend(const Session::Ptr &session, json &js, Timestamp tim
     json response;
     response["msgid"] = AddFriendMsgAck;
     response["friendname"] = friendname;
-    response["friendid"] = _userModel.query(friendname).getId();
 
-    // 添加好友
-    int ret = _friendModel.insert(userid, friendname);
+    User friendUser = co_await run_on_db([this, friendname]() { return _userModel.query(friendname); });
+    response["friendid"] = friendUser.getId();
+
+    int ret = co_await run_on_db([this, userid, friendname]() { return _friendModel.insert(userid, friendname); });
     if (ret == 0)
     {
         LOG_INFO << "[FRIEND] " << userid << " added " << friendname;
@@ -366,12 +376,12 @@ void ChatService::addFriend(const Session::Ptr &session, json &js, Timestamp tim
     }
 }
 
-void ChatService::createGroup(const Session::Ptr &session, json &js, Timestamp time)
+asio::awaitable<void> ChatService::createGroup(const Session::Ptr &session, json js, Timestamp time)
 {
     string name = js["groupname"];
     int creatorid = js["userid"].get<int>();
     Group group(name);
-    int id = _groupModel.create(group, creatorid);
+    int id = co_await run_on_db([this, group, creatorid]() mutable { return _groupModel.create(group, creatorid); });
 
     json response;
     response["msgid"] = CreateGroupMsgAck;
@@ -393,17 +403,17 @@ void ChatService::createGroup(const Session::Ptr &session, json &js, Timestamp t
     }
 }
 
-void ChatService::addGroup(const Session::Ptr &session, json &js, Timestamp time)
+asio::awaitable<void> ChatService::addGroup(const Session::Ptr &session, json js, Timestamp time)
 {
     string gname = js["groupname"];
     int uid = js["userid"].get<int>();
     string role = js["role"];
-    int gid = _groupModel.queryGroupidByName(gname);
+    int gid = co_await run_on_db([this, gname]() { return _groupModel.queryGroupidByName(gname); });
     bool flag;
     if (gid == -1)
         flag = false;
     else
-        flag = _groupModel.addTo(uid, gid, role);
+        flag = co_await run_on_db([this, uid, gid, role]() { return _groupModel.addTo(uid, gid, role); });
 
     json response;
     response["msgid"] = AddGroupMsgAck;
@@ -426,40 +436,38 @@ void ChatService::addGroup(const Session::Ptr &session, json &js, Timestamp time
     }
 }
 
-void ChatService::groupChat(const Session::Ptr &session, json &js, Timestamp time)
+asio::awaitable<void> ChatService::groupChat(const Session::Ptr &session, json js, Timestamp time)
 {
     int gid = js["groupid"].get<int>();
     int uid = js["userid"].get<int>();
-
-    // 将要存储的消息处理一下
     string msg = js["message"].get<string>();
 
-    // 不管在不在线, 都将消息插入到数据库中
-    _messageModel.insert(to_string(gid), true, uid, msg);
+    co_await run_on_db([this, gid, uid, msg]() { _messageModel.insert(to_string(gid), true, uid, msg); });
 
-    vector<int> uids = _groupModel.queryGroupUsersById(gid, uid);
+    vector<int> uids = co_await run_on_db([this, gid, uid]() { return _groupModel.queryGroupUsersById(gid, uid); });
     int localCnt = 0, redisCnt = 0, offlineCnt = 0;
 
     for (int id : uids)
     {
-        lock_guard<mutex> lock(_connMutex);
-        auto it = _userConnMap.find(id);
-        if (it != _userConnMap.end())
         {
-            it->second->send(js.dump());
-            localCnt++;
-            continue;
+            lock_guard<mutex> lock(_connMutex);
+            auto it = _userConnMap.find(id);
+            if (it != _userConnMap.end())
+            {
+                it->second->send(js.dump());
+                localCnt++;
+                continue;
+            }
         }
-        // 向数据库查询该用户是否在线, 在线说明在不同服务器, 发布订阅
-        if (_userModel.queryState(id) == "online")
+        string state = co_await run_on_db([this, id]() { return _userModel.queryState(id); });
+        if (state == "online")
         {
             _redis.publish(id, js.dump());
             redisCnt++;
             continue;
         }
-        // 走到这里说明用户不在线, 未读消息+1
         string key = to_string(id) + "-" + to_string(gid) + "-group";
-        _newMsgModel.addNewMsgByKey(key);
+        co_await run_on_db([this, key]() { _newMsgModel.addNewMsgByKey(key); });
         offlineCnt++;
     }
     LOG_INFO << "[GROUP] " << uid << " -> group:" << gid
@@ -475,7 +483,6 @@ void ChatService::clientCloseException(const Session::Ptr &session)
         {
             if (e.second == session)
             {
-                // 从map中删除用户的连接信息, 更新数据库中的状态信息
                 user.setId(e.first);
                 _userConnMap.erase(e.first);
                 LOG_INFO << "[DISCONNECT] userId=" << user.getId() << " (abnormal)";
@@ -485,77 +492,66 @@ void ChatService::clientCloseException(const Session::Ptr &session)
     }
 
     if (user.getId() == -1)
-        return; // 没有找到对应的用户, 直接返回
+        return;
 
     user.setState("offline");
     _userModel.updateState(user);
 
-    // 退订
     _redis.unsubscribe(user.getId());
 }
 
 void ChatService::reset()
 {
-    // 将所有在线用户的状态设置为离线
     _userModel.resetState();
 }
 
-void ChatService::removeFriend(const Session::Ptr &session, json &js, Timestamp time)
+asio::awaitable<void> ChatService::removeFriend(const Session::Ptr &session, json js, Timestamp time)
 {
-    cout << "触发removeFriend" << endl;
     int id = js["userid"].get<int>();
     int fid = js["friendid"].get<int>();
+    string chatkey = getChatKey(id, fid);
 
-    _friendModel.remove(id, fid);
-
-    // 如果对方在线, 发出请求更新对方客户端
-
-    // 把以往的聊天记录删掉
-    _messageModel.remove(getChatKey(id, fid));
+    co_await run_on_db([this, id, fid, chatkey]() {
+        _friendModel.remove(id, fid);
+        _messageModel.remove(chatkey);
+    });
 }
 
-void ChatService::removeGroup(const Session::Ptr &session, json &js, Timestamp time)
+asio::awaitable<void> ChatService::removeGroup(const Session::Ptr &session, json js, Timestamp time)
 {
-    // 先判断这个用户是否是群组的creator, 是的话移除群组, 否则移除用户
     int id = js["userid"].get<int>();
     int gid = js["groupid"].get<int>();
 
-    bool op = _groupModel.queryRoleById(gid, id);
+    bool op = co_await run_on_db([this, gid, id]() { return _groupModel.queryRoleById(gid, id); });
 
-    if (op) // 是creator
-    {
-        _groupModel.removeGroupById(gid);
-    }
-    else // 是普通用户只要移除用户即可
-    {
-        _groupModel.removeUserFromGroup(id, gid);
-    }
-
-    // 如果是移除群, 把以往的聊天记录删掉
     if (op)
-        _messageModel.remove(to_string(gid));
+    {
+        co_await run_on_db([this, gid]() {
+            _groupModel.removeGroupById(gid);
+            _messageModel.remove(to_string(gid));
+        });
+    }
+    else
+    {
+        co_await run_on_db([this, id, gid]() { _groupModel.removeUserFromGroup(id, gid); });
+    }
 }
 
-void ChatService::getNewMsg(const Session::Ptr &session, json &js, Timestamp time)
+asio::awaitable<void> ChatService::getNewMsg(const Session::Ptr &session, json js, Timestamp time)
 {
-    cout << "触发getNewMsg" << endl;
     int userid = js["userid"].get<int>();
     int sender = js["sender"].get<int>();
     bool isgroup = js["isgroup"].get<bool>();
     string name = js["name"];
-    cout << "已取出信息" << endl;
-    // 合成key
+
     string key;
     if (isgroup)
         key = to_string(userid) + "-" + to_string(sender) + "-group";
     else
         key = to_string(userid) + "-" + to_string(sender);
 
-    // 查询到key对应的cnt
-    int cnt = _newMsgModel.getNewMsgCntByKey(key);
+    int cnt = co_await run_on_db([this, key]() { return _newMsgModel.getNewMsgCntByKey(key); });
 
-    cout << "开始将信息返回前端" << endl;
-    // 连同名字一块返回前端
     json response;
     response["msgid"] = NewMsgAck;
     response["cnt"] = cnt;
@@ -563,42 +559,41 @@ void ChatService::getNewMsg(const Session::Ptr &session, json &js, Timestamp tim
     session->send(response.dump());
 }
 
-void ChatService::addNewMsg(const Session::Ptr &session, json &js, Timestamp time)
+asio::awaitable<void> ChatService::addNewMsg(const Session::Ptr &session, json js, Timestamp time)
 {
     int userid = js["userid"].get<int>();
     int sender = js["sender"].get<int>();
     bool isgroup = js["isgroup"].get<bool>();
-    // 合成key
+
     string key;
     if (isgroup)
         key = to_string(userid) + "-" + to_string(sender) + "-group";
     else
         key = to_string(userid) + "-" + to_string(sender);
 
-    _newMsgModel.addNewMsgByKey(key);
+    co_await run_on_db([this, key]() { _newMsgModel.addNewMsgByKey(key); });
 }
 
-void ChatService::removeNewMsg(const Session::Ptr &session, json &js, Timestamp time)
+asio::awaitable<void> ChatService::removeNewMsg(const Session::Ptr &session, json js, Timestamp time)
 {
     int userid = js["userid"].get<int>();
     int sender = js["sender"].get<int>();
     bool isgroup = js["isgroup"].get<bool>();
-    // 合成key
+
     string key;
     if (isgroup)
         key = to_string(userid) + "-" + to_string(sender) + "-group";
     else
         key = to_string(userid) + "-" + to_string(sender);
 
-    _newMsgModel.removeNewMsgByKey(key);
+    co_await run_on_db([this, key]() { _newMsgModel.removeNewMsgByKey(key); });
 }
 
-void ChatService::getImage(const Session::Ptr &session, json &js, Timestamp time)
+asio::awaitable<void> ChatService::getImage(const Session::Ptr &session, json js, Timestamp time)
 {
     int userid = js["userid"].get<int>();
-    cout << "已发送" << userid << "的头像" << endl;
-    string base64_image = _imageModel.query(userid);
-    cout << "触发getImage" << endl;
+    string base64_image = co_await run_on_db([this, userid]() { return _imageModel.query(userid); });
+
     json response;
     response["msgid"] = imageReqAck;
     response["userid"] = userid;
@@ -607,7 +602,7 @@ void ChatService::getImage(const Session::Ptr &session, json &js, Timestamp time
     {
         response["isSuccess"] = "false";
         session->send(response.dump());
-        return;
+        co_return;
     }
 
     response["isSuccess"] = "true";

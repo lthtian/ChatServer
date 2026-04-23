@@ -99,14 +99,12 @@ asio::awaitable<void> Session::read_loop()
                             try
                             {
                                 json js = json::parse(json_str);
-                                messageCallback_(shared_from_this(), std::move(js));
+                                co_await messageCallback_(shared_from_this(), std::move(js));
                             }
                             catch (const std::exception &e)
                             {
-                                std::cerr << "JSON error: " << e.what() << std::endl;
-                                recvBuf_.clear();
-                                close();
-                                co_return;
+                                std::cerr << "Handler error: " << e.what() << std::endl;
+                                // 不关闭连接，继续处理下一条消息
                             }
                         }
                     }
