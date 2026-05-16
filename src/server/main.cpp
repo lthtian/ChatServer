@@ -22,9 +22,12 @@ void resetHandler(int)
     }
 }
 
-// 异步初始化数据库连接池
-asio::awaitable<void> init_pool()
+// 统一初始化 + 启动服务器（在同一个协程中完成）
+// 解决：Redis 连接后 stream_descriptor 上有 pending async_wait，
+// 导致第一阶段 ioc.run() 无法返回，服务器无法启动的问题
+asio::awaitable<void> bootstrap(ChatServer &server, const string &ip, int port)
 {
+    // 初始化数据库连接池
     DBConfig dbConfig;
     dbConfig.server = "127.0.0.1";
     dbConfig.user = "lth";
@@ -36,6 +39,21 @@ asio::awaitable<void> init_pool()
         co_await asio::this_coro::executor, dbConfig, 10);
 
     cout << "[SERVER] Database connection pool initialized." << endl;
+
+    // 异步初始化 Redis
+    bool redis_ok = co_await ChatService::instance()->init_redis();
+    if (redis_ok)
+    {
+        cout << "[SERVER] Redis connected." << endl;
+    }
+    else
+    {
+        cerr << "[SERVER] Redis connection failed!" << endl;
+    }
+
+    // 启动服务器（在同一个 ioc.run() 中运行）
+    server.start();
+    cout << "[SERVER] ChatServer started on " << ip << ":" << port << endl;
 }
 
 int main(int argc, char *argv[])
@@ -54,21 +72,14 @@ int main(int argc, char *argv[])
     asio::io_context ioc;
     g_ioc = &ioc;
 
-    // 第一步：异步初始化连接池（运行到完成后 ioc.run() 自动返回）
-    asio::co_spawn(ioc, init_pool(), asio::detached);
-    ioc.run();
-
-    // 第二步：重启 ioc，创建服务器（在 main 栈上，生命周期正确）
-    ioc.restart();
+    // 在 main 栈上创建服务器（生命周期由 main 管理）
     ChatServer server(ioc, argv[1], std::atoi(argv[2]));
-    server.start();
 
-    cout << "[SERVER] ChatServer started on " << argv[1] << ":" << argv[2] << endl;
-
-    // 运行服务器事件循环
+    // 初始化 + 启动 合并在同一个协程中，单次 ioc.run() 运行所有内容
+    asio::co_spawn(ioc, bootstrap(server, argv[1], std::atoi(argv[2])), asio::detached);
     ioc.run();
 
-    // 第三步：服务器停止后，重置所有用户状态为 offline
+    // 服务器停止后，重置所有用户状态为 offline
     cout << "[SERVER] Resetting all users to offline..." << endl;
     ioc.restart();
     ChatService::instance()->reset();

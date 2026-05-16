@@ -10,7 +10,14 @@ Session::Session(tcp::socket socket, MessageCallback msgCb, CloseCallback closeC
 
 Session::~Session()
 {
-    close();
+    // read_loop 正常结束时已调用 close()（触发 closeCallback_）
+    // 析构时只关闭 socket，不调用 closeCallback_（此时 shared_ptr 计数已为 0）
+    bool expected = false;
+    if (closed_.compare_exchange_strong(expected, true))
+    {
+        boost::system::error_code ec;
+        socket_.close(ec);
+    }
 }
 
 void Session::start()

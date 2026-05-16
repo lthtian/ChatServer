@@ -67,17 +67,31 @@ ChatService::ChatService()
         co_return co_await this->getImage(s, std::move(j), t);
     });
 
-    // 注册redis服务并且绑定回调函数
-    if (_redis.connect())
+    // Redis 连接延迟到 init_redis() 中执行
+}
+
+// 异步初始化 Redis（在 init_pool 协程中调用，服务器启动前完成）
+asio::awaitable<bool> ChatService::init_redis()
+{
+    bool ok = co_await _redis.connect("127.0.0.1", 6379);
+    if (ok)
     {
-        _redis.init_notify_handler(std::bind(&ChatService::handleRedisSubscribeMessage, this, std::placeholders::_1, std::placeholders::_2));
+        _redis.set_notify_handler(
+            std::bind(&ChatService::handleRedisSubscribeMessage, this,
+                      std::placeholders::_1, std::placeholders::_2));
+        LOG_INFO << "[REDIS] Connected and notify handler registered";
     }
+    else
+    {
+        LOG_ERROR << "[REDIS] Failed to connect";
+    }
+    co_return ok;
 }
 
 // 如果收到publish的订阅消息, 会调用该回调函数, 向消息中对应的用户进行推送
 void ChatService::handleRedisSubscribeMessage(int id, string msg)
 {
-    lock_guard<mutex> lock(_connMutex);
+    // 单线程 io_context，无需 mutex
     auto it = _userConnMap.find(id);
     if (it != _userConnMap.end())
     {
@@ -136,10 +150,9 @@ asio::awaitable<void> ChatService::login(const Session::Ptr &session, json js, T
         user.setState("online");
         co_await _userModel.updateState(user);
 
-        {
-            lock_guard<mutex> lock(_connMutex);
-            _userConnMap.insert({user.getId(), session});
-        }
+        // 单线程 io_context，无需 mutex，同步维护正反向映射
+        _userConnMap.insert({user.getId(), session});
+        _connUserMap[session] = user.getId();
 
         _redis.subscribe(user.getId());
 
@@ -207,11 +220,12 @@ asio::awaitable<void> ChatService::loginout(const Session::Ptr &session, json js
     User user(userid, "", "", "offline");
     co_await _userModel.updateState(user);
 
+    // 单线程 io_context，同步移除正反向映射
+    auto it = _userConnMap.find(userid);
+    if (it != _userConnMap.end())
     {
-        lock_guard<mutex> lock(_connMutex);
-        auto it = _userConnMap.find(userid);
-        if (it != _userConnMap.end())
-            _userConnMap.erase(userid);
+        _connUserMap.erase(it->second);
+        _userConnMap.erase(userid);
     }
 
     _redis.unsubscribe(userid);
@@ -329,15 +343,13 @@ asio::awaitable<void> ChatService::otoChat(const Session::Ptr &session, json js,
 
     co_await _messageModel.insert(chatkey, false, id, msg);
 
+    // 单线程 io_context，无需 mutex
+    auto it = _userConnMap.find(toid);
+    if (it != _userConnMap.end())
     {
-        lock_guard<mutex> lock(_connMutex);
-        auto it = _userConnMap.find(toid);
-        if (it != _userConnMap.end())
-        {
-            it->second->send(js.dump());
-            LOG_INFO << "[CHAT] " << id << " -> " << toid << " (oto, local)";
-            co_return;
-        }
+        it->second->send(js.dump());
+        LOG_INFO << "[CHAT] " << id << " -> " << toid << " (oto, local)";
+        co_return;
     }
 
     string state = co_await _userModel.queryState(toid);
@@ -477,15 +489,13 @@ asio::awaitable<void> ChatService::groupChat(const Session::Ptr &session, json j
 
     for (int id : uids)
     {
+        // 单线程 io_context，无需 mutex
+        auto it = _userConnMap.find(id);
+        if (it != _userConnMap.end())
         {
-            lock_guard<mutex> lock(_connMutex);
-            auto it = _userConnMap.find(id);
-            if (it != _userConnMap.end())
-            {
-                it->second->send(js.dump());
-                localCnt++;
-                continue;
-            }
+            it->second->send(js.dump());
+            localCnt++;
+            continue;
         }
         string state = co_await _userModel.queryState(id);
         if (state == "online")
@@ -510,18 +520,14 @@ asio::awaitable<void> ChatService::groupChat(const Session::Ptr &session, json j
 void ChatService::clientCloseException(const Session::Ptr &session)
 {
     User user;
+    // O(1) 反向查找：Session → userId
+    auto cit = _connUserMap.find(session);
+    if (cit != _connUserMap.end())
     {
-        lock_guard<mutex> lock(_connMutex);
-        for (auto e : _userConnMap)
-        {
-            if (e.second == session)
-            {
-                user.setId(e.first);
-                _userConnMap.erase(e.first);
-                LOG_INFO << "[DISCONNECT] userId=" << user.getId() << " (abnormal)";
-                break;
-            }
-        }
+        user.setId(cit->second);
+        _userConnMap.erase(cit->second);
+        _connUserMap.erase(cit);
+        LOG_INFO << "[DISCONNECT] userId=" << user.getId() << " (abnormal)";
     }
 
     if (user.getId() == -1)

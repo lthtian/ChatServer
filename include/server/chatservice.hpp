@@ -5,7 +5,6 @@
 #include <boost/asio.hpp>
 #include <unordered_map>
 #include <functional>
-#include <mutex>
 #include <chrono>
 using namespace std;
 
@@ -43,6 +42,9 @@ public:
     void clientCloseException(const Session::Ptr &session);
     // 处理消息队列中有订阅的情况
     void handleRedisSubscribeMessage(int, string);
+
+    // 异步初始化 Redis 连接（在 init_pool 协程中调用，确保服务器启动前完成）
+    asio::awaitable<bool> init_redis();
 
     // 以下编写各种业务处理协程函数
     // 处理登录业务
@@ -88,11 +90,11 @@ private:
     // 存储所有消息类型对应的处理函数
     unordered_map<int, MsgHandler> _mhm; // <消息类型, 消息处理函数>
 
-    // 存储用户连接信息
+    // 存储用户连接信息（单线程 io_context，无需 mutex）
     unordered_map<int, Session::Ptr> _userConnMap; // <用户id, 连接对象>
 
-    // 定义互斥锁, 保证_userConnMap的线程安全
-    mutex _connMutex;
+    // 反向映射：Session → userId，用于 clientCloseException 的 O(1) 查找
+    unordered_map<Session::Ptr, int> _connUserMap;
 
     // 数据操作类对象
     UserModel _userModel;
