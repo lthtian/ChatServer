@@ -6,91 +6,98 @@
 #include <vector>
 using namespace std;
 
-#include "db.h"
-#include "connectionpool.h"
+#include "async_connectionpool.hpp"
 #include "json.hpp"
+#include <boost/asio.hpp>
+#include <boost/mysql.hpp>
 using json = nlohmann::json;
+
+namespace asio = boost::asio;
+namespace mysql = boost::mysql;
 
 class FriendModel
 {
 public:
     // 添加好友
-    int insert(int userid, string name)
+    asio::awaitable<int> insert(int userid, string name)
     {
-        int friendid = -1;
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return 2;
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (!mysql)
-            return 2;
+        auto& conn = guard->connection();
 
         // 根据用户名查找用户id, 找不到返回1
-        string sql1 = "select id from User where name = '" + name + "'";
-        MYSQL_RES *result = mysql->query(sql1.c_str());
-        if (result)
-        {
-            MYSQL_ROW row = mysql_fetch_row(result);
-            if (row == nullptr)
-            {
-                mysql->free(result);
-                return 1;
-            }
-            friendid = atoi(row[0]);
-            mysql->free(result);
-        }
-        else
-            return 1;
+        auto stmt1 = co_await conn.async_prepare_statement(
+            "SELECT id FROM User WHERE name=?",
+            asio::use_awaitable);
+
+        mysql::results result1;
+        co_await conn.async_execute(stmt1.bind(name), result1, asio::use_awaitable);
+
+        auto rows1 = result1.rows();
+        if (rows1.empty())
+            co_return 1;
+
+        int friendid = static_cast<int>(rows1[0][0].as_int64());
 
         // 双向添加好友关系
-        string sql2 = "insert into Friend(userid,friendid) values(" + to_string(userid) + "," + to_string(friendid) + ")";
-        string sql3 = "insert into Friend(userid,friendid) values(" + to_string(friendid) + "," + to_string(userid) + ")";
+        auto stmt2 = co_await conn.async_prepare_statement(
+            "INSERT INTO Friend(userid, friendid) VALUES(?, ?)",
+            asio::use_awaitable);
 
-        if (mysql->update(sql2) && mysql->update(sql3))
-            return 0;
+        mysql::results result2;
+        co_await conn.async_execute(stmt2.bind(userid, friendid), result2, asio::use_awaitable);
 
-        return 2;
+        co_await conn.async_execute(stmt2.bind(friendid, userid), result2, asio::use_awaitable);
+
+        co_return 0;
     }
 
-    void remove(int userid, int friendid)
+    asio::awaitable<void> remove(int userid, int friendid)
     {
-        string sql1 = "delete from Friend where userid = " + to_string(userid) + " and friendid = " + to_string(friendid);
-        string sql2 = "delete from Friend where userid = " + to_string(friendid) + " and friendid = " + to_string(userid);
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return;
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (mysql)
-        {
-            mysql->update(sql1);
-            mysql->update(sql2);
-        }
+        auto& conn = guard->connection();
+
+        auto stmt = co_await conn.async_prepare_statement(
+            "DELETE FROM Friend WHERE userid=? AND friendid=?",
+            asio::use_awaitable);
+
+        mysql::results result;
+        co_await conn.async_execute(stmt.bind(userid, friendid), result, asio::use_awaitable);
+        co_await conn.async_execute(stmt.bind(friendid, userid), result, asio::use_awaitable);
     }
 
     // 根据用户id返回好友信息
-    vector<string> query(int userid)
+    asio::awaitable<vector<string>> query(int userid)
     {
         vector<string> ret;
-        string sql = "select t1.friendid, t2.name, t2.state from Friend t1, User t2 where t1.friendid = t2.id and t1.userid = " + to_string(userid);
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (mysql)
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return ret;
+
+        auto& conn = guard->connection();
+
+        auto stmt = co_await conn.async_prepare_statement(
+            "SELECT t1.friendid, t2.name, t2.state FROM Friend t1, User t2 WHERE t1.friendid=t2.id AND t1.userid=?",
+            asio::use_awaitable);
+
+        mysql::results result;
+        co_await conn.async_execute(stmt.bind(userid), result, asio::use_awaitable);
+
+        for (const auto& row : result.rows())
         {
-            MYSQL_RES *result = mysql->query(sql.c_str());
-            if (result)
-            {
-                MYSQL_ROW row;
-                while (row = mysql_fetch_row(result))
-                {
-                    json js;
-                    js["id"] = row[0];
-                    js["name"] = row[1];
-                    js["state"] = row[2];
-                    ret.push_back(js.dump());
-                }
-                mysql->free(result);
-            }
+            json js;
+            js["id"] = std::to_string(static_cast<int>(row[0].as_int64()));
+            js["name"] = std::string(row[1].as_string());
+            js["state"] = std::string(row[2].as_string());
+            ret.push_back(js.dump());
         }
 
-        return ret;
+        co_return ret;
     }
 };

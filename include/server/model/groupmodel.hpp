@@ -3,172 +3,206 @@
 // 群组数据访问层
 
 #include "group.hpp"
-#include "db.h"
-#include "connectionpool.h"
+#include "async_connectionpool.hpp"
+#include "json.hpp"
+#include <boost/asio.hpp>
+#include <boost/mysql.hpp>
+
+namespace asio = boost::asio;
+namespace mysql = boost::mysql;
+using json = nlohmann::json;
 
 class GroupModel
 {
 public:
     // 创建群组
-    int create(Group &group, int creatorid)
+    asio::awaitable<int> create(Group &group, int creatorid)
     {
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (!mysql)
-            return -1;
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return -1;
+
+        auto& conn = guard->connection();
 
         // 先创建组
-        string sql1 = "insert into AllGroup(groupname) values('" + group.getName() + "');";
-        if (!mysql->update(sql1))
-            return -1;
+        auto stmt1 = co_await conn.async_prepare_statement(
+            "INSERT INTO AllGroup(groupname) VALUES(?)",
+            asio::use_awaitable);
 
-        int ret = mysql_insert_id(mysql->get_conn());
+        mysql::results result;
+        co_await conn.async_execute(stmt1.bind(group.getName()), result, asio::use_awaitable);
+
+        if (result.affected_rows() == 0)
+            co_return -1;
+
+        int ret = static_cast<int>(result.last_insert_id());
         group.setId(ret);
 
         // 再把创建者加入组
-        string sql2 = "insert into GroupUser(userid, groupid, grouprole) values(" + to_string(creatorid) + ", " + to_string(group.getId()) + ", 'creator');";
-        if (!mysql->update(sql2))
-            return -1;
+        auto stmt2 = co_await conn.async_prepare_statement(
+            "INSERT INTO GroupUser(userid, groupid, grouprole) VALUES(?, ?, 'creator')",
+            asio::use_awaitable);
 
-        return ret;
+        co_await conn.async_execute(stmt2.bind(creatorid, group.getId()), result, asio::use_awaitable);
+
+        co_return ret;
     }
 
-    int queryGroupidByName(string groupname)
+    asio::awaitable<int> queryGroupidByName(string groupname)
     {
-        string sql = "select id from AllGroup where groupname = '" + groupname + "';";
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return -1;
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (mysql)
+        auto& conn = guard->connection();
+
+        auto stmt = co_await conn.async_prepare_statement(
+            "SELECT id FROM AllGroup WHERE groupname=?",
+            asio::use_awaitable);
+
+        mysql::results result;
+        co_await conn.async_execute(stmt.bind(groupname), result, asio::use_awaitable);
+
+        auto rows = result.rows();
+        if (!rows.empty())
         {
-            MYSQL_RES *result = mysql->query(sql);
-            if (result)
-            {
-                MYSQL_ROW row = mysql_fetch_row(result);
-                if (row && row[0])
-                {
-                    int ret = stoi(row[0]);
-                    mysql->free(result);
-                    return ret;
-                }
-                mysql->free(result);
-            }
+            co_return static_cast<int>(rows[0][0].as_int64());
         }
-        return -1;
+        co_return -1;
     }
 
     // 加入群组
-    bool addTo(int userid, int groupid, string role)
+    asio::awaitable<bool> addTo(int userid, int groupid, string role)
     {
-        string sql = "insert into GroupUser(userid, groupid, grouprole) values(" + to_string(userid) + ", " + to_string(groupid) + ", '" + role + "');";
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return false;
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (mysql)
-            return mysql->update(sql);
-        return false;
+        auto& conn = guard->connection();
+
+        auto stmt = co_await conn.async_prepare_statement(
+            "INSERT INTO GroupUser(userid, groupid, grouprole) VALUES(?, ?, ?)",
+            asio::use_awaitable);
+
+        mysql::results result;
+        co_await conn.async_execute(stmt.bind(userid, groupid, role), result, asio::use_awaitable);
+
+        co_return result.affected_rows() > 0;
     }
 
     // 查询用户所在的群组信息
-    vector<string> queryGroups(int userid)
+    asio::awaitable<vector<string>> queryGroups(int userid)
     {
         vector<string> ret;
-        string sql = "select t2.id, t2.groupname from GroupUser t1, AllGroup t2 where t1.userid = " + to_string(userid) + " and t1.groupid = t2.id;";
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (mysql)
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return ret;
+
+        auto& conn = guard->connection();
+
+        auto stmt = co_await conn.async_prepare_statement(
+            "SELECT t2.id, t2.groupname FROM GroupUser t1, AllGroup t2 WHERE t1.userid=? AND t1.groupid=t2.id",
+            asio::use_awaitable);
+
+        mysql::results result;
+        co_await conn.async_execute(stmt.bind(userid), result, asio::use_awaitable);
+
+        for (const auto& row : result.rows())
         {
-            MYSQL_RES *result = mysql->query(sql);
-            if (result)
-            {
-                MYSQL_ROW row;
-                while (row = mysql_fetch_row(result))
-                {
-                    json js;
-                    js["id"] = row[0];
-                    js["groupname"] = row[1];
-                    ret.push_back(js.dump());
-                }
-                mysql->free(result);
-            }
+            json js;
+            js["id"] = std::to_string(static_cast<int>(row[0].as_int64()));
+            js["groupname"] = std::string(row[1].as_string());
+            ret.push_back(js.dump());
         }
-        return ret;
+        co_return ret;
     }
 
     // 查询一个群组内除自己外的所有用户id
-    vector<int> queryGroupUsersById(int groupid, int userid)
+    asio::awaitable<vector<int>> queryGroupUsersById(int groupid, int userid)
     {
-        string sql = "select userid from GroupUser where groupid = " + to_string(groupid) + " and userid != " + to_string(userid);
         vector<int> users;
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (mysql)
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return users;
+
+        auto& conn = guard->connection();
+
+        auto stmt = co_await conn.async_prepare_statement(
+            "SELECT userid FROM GroupUser WHERE groupid=? AND userid!=?",
+            asio::use_awaitable);
+
+        mysql::results result;
+        co_await conn.async_execute(stmt.bind(groupid, userid), result, asio::use_awaitable);
+
+        for (const auto& row : result.rows())
         {
-            MYSQL_RES *result = mysql->query(sql);
-            if (result)
-            {
-                MYSQL_ROW row;
-                while (row = mysql_fetch_row(result))
-                {
-                    users.push_back(stoi(row[0]));
-                }
-                mysql->free(result);
-            }
+            users.push_back(static_cast<int>(row[0].as_int64()));
         }
-        return users;
+        co_return users;
     }
 
-    bool queryRoleById(int groupid, int userid)
+    asio::awaitable<bool> queryRoleById(int groupid, int userid)
     {
-        string sql = "select grouprole from GroupUser where groupid = " + to_string(groupid) + " and userid = " + to_string(userid);
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return false;
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (mysql)
+        auto& conn = guard->connection();
+
+        auto stmt = co_await conn.async_prepare_statement(
+            "SELECT grouprole FROM GroupUser WHERE groupid=? AND userid=?",
+            asio::use_awaitable);
+
+        mysql::results result;
+        co_await conn.async_execute(stmt.bind(groupid, userid), result, asio::use_awaitable);
+
+        auto rows = result.rows();
+        if (!rows.empty())
         {
-            MYSQL_RES *result = mysql->query(sql);
-            if (result)
-            {
-                MYSQL_ROW row = mysql_fetch_row(result);
-                if (row && row[0])
-                {
-                    if (strcmp(row[0], "creator") == 0)
-                    {
-                        mysql->free(result);
-                        return true;
-                    }
-                }
-                mysql->free(result);
-            }
+            auto role = std::string(rows[0][0].as_string());
+            co_return role == "creator";
         }
-        return false;
+        co_return false;
     }
 
-    void removeGroupById(int gid)
+    asio::awaitable<void> removeGroupById(int gid)
     {
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (!mysql)
-            return;
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return;
+
+        auto& conn = guard->connection();
+
+        mysql::results result;
 
         // 在AllGroup中删除该群组
-        string sql1 = "delete from AllGroup where id = " + to_string(gid);
-        mysql->query(sql1);
+        auto stmt1 = co_await conn.async_prepare_statement(
+            "DELETE FROM AllGroup WHERE id=?",
+            asio::use_awaitable);
+        co_await conn.async_execute(stmt1.bind(gid), result, asio::use_awaitable);
 
         // 在GroupUser中删除该群组成员
-        string sql2 = "delete from GroupUser where groupid = " + to_string(gid);
-        mysql->query(sql2);
+        auto stmt2 = co_await conn.async_prepare_statement(
+            "DELETE FROM GroupUser WHERE groupid=?",
+            asio::use_awaitable);
+        co_await conn.async_execute(stmt2.bind(gid), result, asio::use_awaitable);
     }
 
-    void removeUserFromGroup(int userid, int groupid)
+    asio::awaitable<void> removeUserFromGroup(int userid, int groupid)
     {
-        string sql = "delete from GroupUser where userid = " + to_string(userid) + " and groupid = " + to_string(groupid);
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return;
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (mysql)
-            mysql->query(sql);
+        auto& conn = guard->connection();
+
+        auto stmt = co_await conn.async_prepare_statement(
+            "DELETE FROM GroupUser WHERE userid=? AND groupid=?",
+            asio::use_awaitable);
+
+        mysql::results result;
+        co_await conn.async_execute(stmt.bind(userid, groupid), result, asio::use_awaitable);
     }
 };

@@ -5,11 +5,15 @@
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/buffer.h>
-#include "db.h"
-#include "connectionpool.h"
+#include "async_connectionpool.hpp"
+#include <boost/asio.hpp>
+#include <boost/mysql.hpp>
 #include <vector>
 #include <cstring>
 #include <opencv2/opencv.hpp>
+
+namespace asio = boost::asio;
+namespace mysql = boost::mysql;
 
 class ImageModel
 {
@@ -66,107 +70,75 @@ public:
     }
 
     // 插入图片
-    void insert(const int id, const std::string &image_data)
+    asio::awaitable<void> insert(const int id, const std::string &image_data)
     {
         std::string compressed_data = compressImage(image_data);
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (!mysql)
-            return;
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return;
 
-        MYSQL_STMT *stmt = mysql_stmt_init(mysql->get_conn());
-        const char *sql = "INSERT INTO images(id, image_data) VALUES(?, ?)";
-        mysql_stmt_prepare(stmt, sql, strlen(sql));
+        auto& conn = guard->connection();
 
-        MYSQL_BIND bind[2];
-        memset(bind, 0, sizeof(bind));
+        auto stmt = co_await conn.async_prepare_statement(
+            "INSERT INTO images(id, image_data) VALUES(?, ?)",
+            asio::use_awaitable);
 
-        bind[0].buffer_type = MYSQL_TYPE_LONG;
-        bind[0].buffer = (void *)&id;
-
-        bind[1].buffer_type = MYSQL_TYPE_BLOB;
-        bind[1].buffer = (void *)compressed_data.data();
-        bind[1].buffer_length = compressed_data.size();
-
-        mysql_stmt_bind_param(stmt, bind);
-        mysql_stmt_execute(stmt);
-        mysql_stmt_close(stmt);
+        // boost::mysql blob 参数：使用 string 作为 blob_view
+        mysql::results result;
+        co_await conn.async_execute(
+            stmt.bind(id, mysql::blob_view(reinterpret_cast<const unsigned char*>(compressed_data.data()), compressed_data.size())),
+            result, asio::use_awaitable);
     }
 
     // 查询图片
-    string query(int image_id)
+    asio::awaitable<string> query(int image_id)
     {
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (!mysql)
-            return "";
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return "";
 
-        MYSQL_STMT *stmt = mysql_stmt_init(mysql->get_conn());
-        const char *sql = "SELECT image_data FROM images WHERE id=?";
-        mysql_stmt_prepare(stmt, sql, strlen(sql));
+        auto& conn = guard->connection();
 
-        MYSQL_BIND param;
-        memset(&param, 0, sizeof(param));
-        param.buffer_type = MYSQL_TYPE_LONG;
-        param.buffer = &image_id;
-        mysql_stmt_bind_param(stmt, &param);
+        auto stmt = co_await conn.async_prepare_statement(
+            "SELECT image_data FROM images WHERE id=?",
+            asio::use_awaitable);
 
-        unsigned long data_length;
-        std::vector<char> buffer(10 * 1024 * 1024);
-        MYSQL_BIND result;
-        memset(&result, 0, sizeof(result));
-        result.buffer_type = MYSQL_TYPE_BLOB;
-        result.buffer = buffer.data();
-        result.buffer_length = buffer.size();
-        result.length = &data_length;
+        mysql::results result;
+        co_await conn.async_execute(stmt.bind(image_id), result, asio::use_awaitable);
 
-        mysql_stmt_bind_result(stmt, &result);
-
-        if (mysql_stmt_execute(stmt) || mysql_stmt_fetch(stmt))
+        auto rows = result.rows();
+        if (!rows.empty())
         {
-            mysql_stmt_close(stmt);
-            return "";
+            auto blob_data = rows[0][0].as_blob();
+            co_return base64_encode(
+                reinterpret_cast<const char*>(blob_data.data()),
+                blob_data.size());
         }
-
-        mysql_stmt_close(stmt);
-        return base64_encode(buffer.data(), data_length);
+        co_return "";
     }
 
     // 更新图片
-    bool update(int image_id, const string &new_image_data)
+    asio::awaitable<bool> update(int image_id, const string &new_image_data)
     {
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (!mysql)
-            return false;
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return false;
 
-        MYSQL_STMT *stmt = mysql_stmt_init(mysql->get_conn());
-        const char *sql = "UPDATE images SET image_data=? WHERE id=?";
-        if (mysql_stmt_prepare(stmt, sql, strlen(sql)))
-        {
-            return false;
-        }
+        auto& conn = guard->connection();
 
-        MYSQL_BIND bind[2];
-        memset(bind, 0, sizeof(bind));
+        auto stmt = co_await conn.async_prepare_statement(
+            "UPDATE images SET image_data=? WHERE id=?",
+            asio::use_awaitable);
 
-        bind[0].buffer_type = MYSQL_TYPE_BLOB;
-        bind[0].buffer = (void *)new_image_data.data();
-        bind[0].buffer_length = new_image_data.size();
+        mysql::results result;
+        co_await conn.async_execute(
+            stmt.bind(
+                mysql::blob_view(reinterpret_cast<const unsigned char*>(new_image_data.data()), new_image_data.size()),
+                image_id),
+            result, asio::use_awaitable);
 
-        bind[1].buffer_type = MYSQL_TYPE_LONG;
-        bind[1].buffer = &image_id;
-
-        if (mysql_stmt_bind_param(stmt, bind))
-        {
-            mysql_stmt_close(stmt);
-            return false;
-        }
-
-        bool ret = (mysql_stmt_execute(stmt) == 0);
-        mysql_stmt_close(stmt);
-        return ret;
+        co_return result.affected_rows() > 0;
     }
 
 private:

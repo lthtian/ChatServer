@@ -1,6 +1,6 @@
 #include "chatservice.hpp"
 #include "public.hpp"
-#include "connectionpool.h"
+#include "async_connectionpool.hpp"
 #include "log.hpp"
 #include <openssl/bio.h>
 #include <openssl/evp.h>
@@ -14,23 +14,8 @@ ChatService *ChatService::instance()
 
 ChatService::ChatService()
 {
-    // 初始化数据库连接池
-    DBConfig dbConfig;
-    dbConfig.server = "127.0.0.1";
-    dbConfig.user = "lth";
-    dbConfig.password = "040915lLth!";
-    dbConfig.dbname = "chat";
-    dbConfig.port = 3306;
-
-    LOG_INFO << "Initializing MySQL connection pool: server=" << dbConfig.server
-             << ", user=" << dbConfig.user
-             << ", dbname=" << dbConfig.dbname;
-
-    int connectionCount = 10;
-    ConnectionPool::instance()->init(dbConfig, connectionCount);
-
-    int availableCount = ConnectionPool::instance()->getAvailableCount();
-    LOG_INFO << "Database connection pool initialized. Available connections: " << availableCount;
+    // 数据库连接池配置（实际初始化在 main.cpp 中异步执行）
+    // 此处只注册 handler
 
     // 为每个消息类型注册对应的协程 handler
     _mhm.emplace(LoginMsg, [this](const Session::Ptr &s, json j, Timestamp t) -> asio::awaitable<void> {
@@ -101,7 +86,12 @@ void ChatService::handleRedisSubscribeMessage(int id, string msg)
         return;
     }
 
-    _offlineMsgModel.insert(id, msg);
+    // 异步存储离线消息（fire-and-forget，通过 co_spawn 投递）
+    asio::co_spawn(AsyncConnectionPool::instance()->get_executor(),
+        [this, id, msg = std::move(msg)]() mutable -> asio::awaitable<void> {
+            co_await _offlineMsgModel.insert(id, msg);
+        },
+        asio::detached);
     LOG_INFO << "[REDIS] SUBSCRIBE recv for " << id << " (offline)";
 }
 
@@ -123,9 +113,11 @@ MsgHandler ChatService::getHandler(int msgid)
 
 asio::awaitable<void> ChatService::login(const Session::Ptr &session, json js, Timestamp time)
 {
+    try
+    {
     string name = js["username"];
     string password = js["password"];
-    User user = co_await run_on_db([this, name]() { return _userModel.query(name); });
+    User user = co_await _userModel.query(name);
 
     if (user.getName() == name && user.getPwd() == password)
     {
@@ -142,7 +134,7 @@ asio::awaitable<void> ChatService::login(const Session::Ptr &session, json js, T
         }
 
         user.setState("online");
-        co_await run_on_db([this, user]() mutable { _userModel.updateState(user); });
+        co_await _userModel.updateState(user);
 
         {
             lock_guard<mutex> lock(_connMutex);
@@ -169,35 +161,51 @@ asio::awaitable<void> ChatService::login(const Session::Ptr &session, json js, T
         session->send(response.dump());
         LOG_WARN << "[LOGIN] Failed: invalid credentials for " << name;
     }
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR << "[LOGIN] Exception: " << e.what();
+    }
 }
 
 asio::awaitable<void> ChatService::init(const Session::Ptr &session, json js, Timestamp time)
 {
+    try
+    {
     int id = js["id"].get<int>();
 
     json response;
     response["msgid"] = InitMsgAck;
 
-    vector<string> friends = co_await run_on_db([this, id]() { return _friendModel.query(id); });
+    vector<string> friends = co_await _friendModel.query(id);
     if (!friends.empty())
     {
         response["friends"] = friends;
     }
 
-    vector<string> groups = co_await run_on_db([this, id]() { return _groupModel.queryGroups(id); });
+    vector<string> groups = co_await _groupModel.queryGroups(id);
     if (!groups.empty())
     {
         response["groups"] = groups;
     }
 
+    LOG_INFO << "[INIT] userId=" << id
+             << " friends=" << friends.size() << " groups=" << groups.size()
+             << " resp_size=" << response.dump().size();
+
     session->send(response.dump());
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR << "[INIT] Exception for userId=" << js.value("id", -1) << ": " << e.what();
+    }
 }
 
 asio::awaitable<void> ChatService::loginout(const Session::Ptr &session, json js, Timestamp time)
 {
     int userid = js["id"].get<int>();
     User user(userid, "", "", "offline");
-    co_await run_on_db([this, user]() mutable { _userModel.updateState(user); });
+    co_await _userModel.updateState(user);
 
     {
         lock_guard<mutex> lock(_connMutex);
@@ -235,29 +243,26 @@ asio::awaitable<void> ChatService::reg(const Session::Ptr &session, json js, Tim
     string password = js["password"];
 
     // insert 会修改 user 的 id（自增ID），需要返回修改后的 user
-    auto [ret, insertedUser] = co_await run_on_db([this, name, password]() mutable -> pair<bool, User> {
-        User user;
-        user.setName(name);
-        user.setPwd(password);
-        bool r = _userModel.insert(user);
-        return {r, user};
-    });
+    User user;
+    user.setName(name);
+    user.setPwd(password);
+    bool ret = co_await _userModel.insert(user);
 
     if (ret)
     {
-        LOG_INFO << "[REGISTER] Success: " << name << " (userId:" << insertedUser.getId() << ")";
+        LOG_INFO << "[REGISTER] Success: " << name << " (userId:" << user.getId() << ")";
         json response;
         response["msgid"] = RegMsgAck;
         response["errno"] = 0;
-        response["id"] = insertedUser.getId();
+        response["id"] = user.getId();
         session->send(response.dump());
 
         if (js.contains("avatar") && js["avatar"].is_string())
         {
             string avatar_base64 = js["avatar"];
             string avatar_binary = base64_decode(avatar_base64);
-            int uid = insertedUser.getId();
-            co_await run_on_db([this, uid, avatar_binary]() { _imageModel.insert(uid, avatar_binary); });
+            int uid = user.getId();
+            co_await _imageModel.insert(uid, avatar_binary);
         }
     }
     else
@@ -273,40 +278,56 @@ asio::awaitable<void> ChatService::reg(const Session::Ptr &session, json js, Tim
 
 asio::awaitable<void> ChatService::history(const Session::Ptr &session, json js, Timestamp time)
 {
+    try
+    {
     bool flag = js["isgroup"].get<bool>();
     if (!flag)
     {
         int id1 = js["id1"].get<int>();
         int id2 = js["id2"].get<int>();
-        vector<string> hist = co_await run_on_db([this, key = getChatKey(id1, id2)]() { return _messageModel.query(key); });
+        string chatkey = getChatKey(id1, id2);
+        vector<string> hist = co_await _messageModel.query(chatkey);
 
         json response;
-        response["isgroup"] = flag;
         response["msgid"] = HistoryMsgAck;
+        response["isgroup"] = flag;
+        response["id1"] = id1;
+        response["id2"] = id2;
         response["history"] = hist;
         session->send(response.dump());
+        LOG_INFO << "[HISTORY] oto id1=" << id1 << " id2=" << id2
+                 << " chatkey=" << chatkey << " count=" << hist.size();
     }
     else
     {
         int groupid = js["groupid"].get<int>();
-        vector<string> hist = co_await run_on_db([this, groupid]() { return _messageModel.query(to_string(groupid)); });
+        vector<string> hist = co_await _messageModel.query(to_string(groupid));
 
         json response;
-        response["isgroup"] = flag;
         response["msgid"] = HistoryMsgAck;
+        response["isgroup"] = flag;
+        response["groupid"] = groupid;
         response["history"] = hist;
         session->send(response.dump());
+        LOG_INFO << "[HISTORY] group groupid=" << groupid << " count=" << hist.size();
+    }
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR << "[HISTORY] Exception: " << e.what();
     }
 }
 
 asio::awaitable<void> ChatService::otoChat(const Session::Ptr &session, json js, Timestamp time)
 {
+    try
+    {
     int id = js["id"].get<int>();
     int toid = js["to"].get<int>();
     string msg = js["message"].get<string>();
     string chatkey = getChatKey(id, toid);
 
-    co_await run_on_db([this, chatkey, id, msg]() { _messageModel.insert(chatkey, false, id, msg); });
+    co_await _messageModel.insert(chatkey, false, id, msg);
 
     {
         lock_guard<mutex> lock(_connMutex);
@@ -319,7 +340,7 @@ asio::awaitable<void> ChatService::otoChat(const Session::Ptr &session, json js,
         }
     }
 
-    string state = co_await run_on_db([this, toid]() { return _userModel.queryState(toid); });
+    string state = co_await _userModel.queryState(toid);
     if (state == "online")
     {
         _redis.publish(toid, js.dump());
@@ -328,8 +349,13 @@ asio::awaitable<void> ChatService::otoChat(const Session::Ptr &session, json js,
     }
 
     string key = to_string(toid) + "-" + to_string(id);
-    co_await run_on_db([this, key]() { _newMsgModel.addNewMsgByKey(key); });
+    co_await _newMsgModel.addNewMsgByKey(key);
     LOG_INFO << "[CHAT] " << id << " -> " << toid << " (oto, offline)";
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR << "[OTO_CHAT] Exception: " << e.what();
+    }
 }
 
 string ChatService::getChatKey(int id1, int id2)
@@ -349,10 +375,10 @@ asio::awaitable<void> ChatService::addFriend(const Session::Ptr &session, json j
     response["msgid"] = AddFriendMsgAck;
     response["friendname"] = friendname;
 
-    User friendUser = co_await run_on_db([this, friendname]() { return _userModel.query(friendname); });
+    User friendUser = co_await _userModel.query(friendname);
     response["friendid"] = friendUser.getId();
 
-    int ret = co_await run_on_db([this, userid, friendname]() { return _friendModel.insert(userid, friendname); });
+    int ret = co_await _friendModel.insert(userid, friendname);
     if (ret == 0)
     {
         LOG_INFO << "[FRIEND] " << userid << " added " << friendname;
@@ -381,7 +407,7 @@ asio::awaitable<void> ChatService::createGroup(const Session::Ptr &session, json
     string name = js["groupname"];
     int creatorid = js["userid"].get<int>();
     Group group(name);
-    int id = co_await run_on_db([this, group, creatorid]() mutable { return _groupModel.create(group, creatorid); });
+    int id = co_await _groupModel.create(group, creatorid);
 
     json response;
     response["msgid"] = CreateGroupMsgAck;
@@ -408,12 +434,12 @@ asio::awaitable<void> ChatService::addGroup(const Session::Ptr &session, json js
     string gname = js["groupname"];
     int uid = js["userid"].get<int>();
     string role = js["role"];
-    int gid = co_await run_on_db([this, gname]() { return _groupModel.queryGroupidByName(gname); });
+    int gid = co_await _groupModel.queryGroupidByName(gname);
     bool flag;
     if (gid == -1)
         flag = false;
     else
-        flag = co_await run_on_db([this, uid, gid, role]() { return _groupModel.addTo(uid, gid, role); });
+        flag = co_await _groupModel.addTo(uid, gid, role);
 
     json response;
     response["msgid"] = AddGroupMsgAck;
@@ -438,13 +464,15 @@ asio::awaitable<void> ChatService::addGroup(const Session::Ptr &session, json js
 
 asio::awaitable<void> ChatService::groupChat(const Session::Ptr &session, json js, Timestamp time)
 {
+    try
+    {
     int gid = js["groupid"].get<int>();
     int uid = js["userid"].get<int>();
     string msg = js["message"].get<string>();
 
-    co_await run_on_db([this, gid, uid, msg]() { _messageModel.insert(to_string(gid), true, uid, msg); });
+    co_await _messageModel.insert(to_string(gid), true, uid, msg);
 
-    vector<int> uids = co_await run_on_db([this, gid, uid]() { return _groupModel.queryGroupUsersById(gid, uid); });
+    vector<int> uids = co_await _groupModel.queryGroupUsersById(gid, uid);
     int localCnt = 0, redisCnt = 0, offlineCnt = 0;
 
     for (int id : uids)
@@ -459,7 +487,7 @@ asio::awaitable<void> ChatService::groupChat(const Session::Ptr &session, json j
                 continue;
             }
         }
-        string state = co_await run_on_db([this, id]() { return _userModel.queryState(id); });
+        string state = co_await _userModel.queryState(id);
         if (state == "online")
         {
             _redis.publish(id, js.dump());
@@ -467,11 +495,16 @@ asio::awaitable<void> ChatService::groupChat(const Session::Ptr &session, json j
             continue;
         }
         string key = to_string(id) + "-" + to_string(gid) + "-group";
-        co_await run_on_db([this, key]() { _newMsgModel.addNewMsgByKey(key); });
+        co_await _newMsgModel.addNewMsgByKey(key);
         offlineCnt++;
     }
     LOG_INFO << "[GROUP] " << uid << " -> group:" << gid
              << " (local:" << localCnt << " redis:" << redisCnt << " offline:" << offlineCnt << ")";
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR << "[GROUP_CHAT] Exception: " << e.what();
+    }
 }
 
 void ChatService::clientCloseException(const Session::Ptr &session)
@@ -495,14 +528,25 @@ void ChatService::clientCloseException(const Session::Ptr &session)
         return;
 
     user.setState("offline");
-    _userModel.updateState(user);
+
+    // 异步更新状态（fire-and-forget，通过 co_spawn 投递）
+    asio::co_spawn(AsyncConnectionPool::instance()->get_executor(),
+        [this, user]() mutable -> asio::awaitable<void> {
+            co_await _userModel.updateState(user);
+        },
+        asio::detached);
 
     _redis.unsubscribe(user.getId());
 }
 
 void ChatService::reset()
 {
-    _userModel.resetState();
+    // 异步重置状态（fire-and-forget，通过 co_spawn 投递）
+    asio::co_spawn(AsyncConnectionPool::instance()->get_executor(),
+        [this]() -> asio::awaitable<void> {
+            co_await _userModel.resetState();
+        },
+        asio::detached);
 }
 
 asio::awaitable<void> ChatService::removeFriend(const Session::Ptr &session, json js, Timestamp time)
@@ -511,10 +555,8 @@ asio::awaitable<void> ChatService::removeFriend(const Session::Ptr &session, jso
     int fid = js["friendid"].get<int>();
     string chatkey = getChatKey(id, fid);
 
-    co_await run_on_db([this, id, fid, chatkey]() {
-        _friendModel.remove(id, fid);
-        _messageModel.remove(chatkey);
-    });
+    co_await _friendModel.remove(id, fid);
+    co_await _messageModel.remove(chatkey);
 }
 
 asio::awaitable<void> ChatService::removeGroup(const Session::Ptr &session, json js, Timestamp time)
@@ -522,18 +564,16 @@ asio::awaitable<void> ChatService::removeGroup(const Session::Ptr &session, json
     int id = js["userid"].get<int>();
     int gid = js["groupid"].get<int>();
 
-    bool op = co_await run_on_db([this, gid, id]() { return _groupModel.queryRoleById(gid, id); });
+    bool op = co_await _groupModel.queryRoleById(gid, id);
 
     if (op)
     {
-        co_await run_on_db([this, gid]() {
-            _groupModel.removeGroupById(gid);
-            _messageModel.remove(to_string(gid));
-        });
+        co_await _groupModel.removeGroupById(gid);
+        co_await _messageModel.remove(to_string(gid));
     }
     else
     {
-        co_await run_on_db([this, id, gid]() { _groupModel.removeUserFromGroup(id, gid); });
+        co_await _groupModel.removeUserFromGroup(id, gid);
     }
 }
 
@@ -550,7 +590,7 @@ asio::awaitable<void> ChatService::getNewMsg(const Session::Ptr &session, json j
     else
         key = to_string(userid) + "-" + to_string(sender);
 
-    int cnt = co_await run_on_db([this, key]() { return _newMsgModel.getNewMsgCntByKey(key); });
+    int cnt = co_await _newMsgModel.getNewMsgCntByKey(key);
 
     json response;
     response["msgid"] = NewMsgAck;
@@ -571,7 +611,7 @@ asio::awaitable<void> ChatService::addNewMsg(const Session::Ptr &session, json j
     else
         key = to_string(userid) + "-" + to_string(sender);
 
-    co_await run_on_db([this, key]() { _newMsgModel.addNewMsgByKey(key); });
+    co_await _newMsgModel.addNewMsgByKey(key);
 }
 
 asio::awaitable<void> ChatService::removeNewMsg(const Session::Ptr &session, json js, Timestamp time)
@@ -586,13 +626,13 @@ asio::awaitable<void> ChatService::removeNewMsg(const Session::Ptr &session, jso
     else
         key = to_string(userid) + "-" + to_string(sender);
 
-    co_await run_on_db([this, key]() { _newMsgModel.removeNewMsgByKey(key); });
+    co_await _newMsgModel.removeNewMsgByKey(key);
 }
 
 asio::awaitable<void> ChatService::getImage(const Session::Ptr &session, json js, Timestamp time)
 {
     int userid = js["userid"].get<int>();
-    string base64_image = co_await run_on_db([this, userid]() { return _imageModel.query(userid); });
+    string base64_image = co_await _imageModel.query(userid);
 
     json response;
     response["msgid"] = imageReqAck;

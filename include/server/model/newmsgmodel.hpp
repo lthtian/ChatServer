@@ -4,89 +4,90 @@
 
 #include <iostream>
 #include <vector>
-#include "db.h"
-#include "connectionpool.h"
+#include "async_connectionpool.hpp"
+#include <boost/asio.hpp>
+#include <boost/mysql.hpp>
 using namespace std;
+
+namespace asio = boost::asio;
+namespace mysql = boost::mysql;
 
 class NewMsgModel
 {
 public:
     // 增加未读消息计数
-    void addNewMsgByKey(string key)
+    asio::awaitable<void> addNewMsgByKey(string key)
     {
-        string sql = "select cnt from NewMsgCnt where `key` = '" + key + "';";
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return;
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (mysql)
+        auto& conn = guard->connection();
+
+        // 先查询是否存在
+        auto stmt1 = co_await conn.async_prepare_statement(
+            "SELECT cnt FROM NewMsgCnt WHERE `key`=?",
+            asio::use_awaitable);
+
+        mysql::results result;
+        co_await conn.async_execute(stmt1.bind(key), result, asio::use_awaitable);
+
+        if (result.rows().empty())
         {
-            MYSQL_RES *result = mysql->query(sql);
-            if (result)
-            {
-                int row_count = mysql_num_rows(result);
-                cout << "row_count: " << row_count << endl;
-                mysql_free_result(result);
-
-                if (row_count == 0)
-                {
-                    sql = "insert into NewMsgCnt values('" + key + "', 1);";
-                }
-                else
-                {
-                    sql = "update NewMsgCnt set cnt = cnt + 1 where `key` = '" + key + "';";
-                }
-                mysql->update(sql);
-            }
+            // 不存在，插入新记录
+            auto stmt2 = co_await conn.async_prepare_statement(
+                "INSERT INTO NewMsgCnt(`key`, cnt) VALUES(?, 1)",
+                asio::use_awaitable);
+            co_await conn.async_execute(stmt2.bind(key), result, asio::use_awaitable);
+        }
+        else
+        {
+            // 已存在，计数加1
+            auto stmt2 = co_await conn.async_prepare_statement(
+                "UPDATE NewMsgCnt SET cnt=cnt+1 WHERE `key`=?",
+                asio::use_awaitable);
+            co_await conn.async_execute(stmt2.bind(key), result, asio::use_awaitable);
         }
     }
 
     // 删除未读消息计数
-    void removeNewMsgByKey(string key)
+    asio::awaitable<void> removeNewMsgByKey(string key)
     {
-        string sql = "delete from NewMsgCnt where `key` = '" + key + "';";
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return;
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (mysql)
-        {
-            if (!mysql->update(sql))
-            {
-                cerr << "删除失败: " << sql << endl;
-            }
-        }
+        auto& conn = guard->connection();
+
+        auto stmt = co_await conn.async_prepare_statement(
+            "DELETE FROM NewMsgCnt WHERE `key`=?",
+            asio::use_awaitable);
+
+        mysql::results result;
+        co_await conn.async_execute(stmt.bind(key), result, asio::use_awaitable);
     }
 
     // 获取未读消息计数
-    int getNewMsgCntByKey(string key)
+    asio::awaitable<int> getNewMsgCntByKey(string key)
     {
-        string sql = "select cnt from NewMsgCnt where `key` = '" + key + "';";
-        cout << sql << endl;
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return 0;
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (mysql)
+        auto& conn = guard->connection();
+
+        auto stmt = co_await conn.async_prepare_statement(
+            "SELECT cnt FROM NewMsgCnt WHERE `key`=?",
+            asio::use_awaitable);
+
+        mysql::results result;
+        co_await conn.async_execute(stmt.bind(key), result, asio::use_awaitable);
+
+        auto rows = result.rows();
+        if (!rows.empty())
         {
-            MYSQL_RES *result = mysql->query(sql);
-            if (result)
-            {
-                int cnt = 0;
-                if (mysql_num_rows(result) == 0)
-                {
-                    mysql_free_result(result);
-                    return 0;
-                }
-                else
-                {
-                    MYSQL_ROW row = mysql->fetch_row(result);
-                    if (row && row[0])
-                    {
-                        cnt = stoi(row[0]);
-                    }
-                    mysql_free_result(result);
-                    return cnt;
-                }
-            }
+            co_return static_cast<int>(rows[0][0].as_int64());
         }
-        return 0;
+        co_return 0;
     }
 };

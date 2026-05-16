@@ -3,113 +3,150 @@
 // 用户数据访问层
 
 #include "user.hpp"
-#include "db.h"
-#include "connectionpool.h"
+#include "async_connectionpool.hpp"
+#include <boost/asio.hpp>
+#include <boost/mysql.hpp>
+
+namespace asio = boost::asio;
+namespace mysql = boost::mysql;
 
 class UserModel
 {
 public:
     // 将用户注册信息插入数据库
-    bool insert(User &user)
+    asio::awaitable<bool> insert(User &user)
     {
-        string sql = "insert into User(name,password, state) values('" + user.getName() + "','" + user.getPwd() + "','" + user.getState() + "')";
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return false;
 
-        // 使用连接池获取连接，ConnectionGuard自动归还
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (mysql && mysql->update(sql))
+        auto& conn = guard->connection();
+
+        auto stmt = co_await conn.async_prepare_statement(
+            "INSERT INTO User(name, password, state) VALUES(?, ?, ?)",
+            asio::use_awaitable);
+
+        mysql::results result;
+        co_await conn.async_execute(
+            stmt.bind(user.getName(), user.getPwd(), user.getState()),
+            result, asio::use_awaitable);
+
+        if (result.affected_rows() > 0)
         {
             // 设置对应的主键
-            user.setId(mysql_insert_id(mysql->get_conn()));
-            return true;
+            user.setId(static_cast<int>(result.last_insert_id()));
+            co_return true;
         }
-        return false;
+        co_return false;
     }
 
-    bool update(User &user)
+    asio::awaitable<bool> update(User &user)
     {
-        string sql = "update User set name = '" + user.getName() + "', password = '" + user.getPwd() + "', state = '" + user.getState() + "' where id = " + to_string(user.getId());
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return false;
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (mysql && mysql->update(sql))
-            return true;
-        return false;
+        auto& conn = guard->connection();
+
+        auto stmt = co_await conn.async_prepare_statement(
+            "UPDATE User SET name=?, password=?, state=? WHERE id=?",
+            asio::use_awaitable);
+
+        mysql::results result;
+        co_await conn.async_execute(
+            stmt.bind(user.getName(), user.getPwd(), user.getState(), user.getId()),
+            result, asio::use_awaitable);
+
+        co_return result.affected_rows() > 0;
     }
 
-    bool updateState(User &user)
+    asio::awaitable<bool> updateState(User &user)
     {
-        string sql = "update User set state = '" + user.getState() + "' where id = " + to_string(user.getId());
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return false;
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (mysql && mysql->update(sql))
-            return true;
-        return false;
+        auto& conn = guard->connection();
+
+        auto stmt = co_await conn.async_prepare_statement(
+            "UPDATE User SET state=? WHERE id=?",
+            asio::use_awaitable);
+
+        mysql::results result;
+        co_await conn.async_execute(
+            stmt.bind(user.getState(), user.getId()),
+            result, asio::use_awaitable);
+
+        co_return result.affected_rows() > 0;
     }
 
-    bool resetState()
+    asio::awaitable<bool> resetState()
     {
-        string sql = "update User set state = 'offline' where state = 'online'";
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return false;
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (mysql && mysql->update(sql))
-            return true;
-        return false;
+        auto& conn = guard->connection();
+
+        mysql::results result;
+        co_await conn.async_execute(
+            "UPDATE User SET state='offline' WHERE state='online'",
+            result, asio::use_awaitable);
+
+        co_return result.affected_rows() > 0;
     }
 
     // 根据用户名称查询用户信息
-    User query(const string &name)
+    asio::awaitable<User> query(const string &name)
     {
-        string sql = "select * from User where name = '" + name + "'";
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return User();
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (mysql)
+        auto& conn = guard->connection();
+
+        auto stmt = co_await conn.async_prepare_statement(
+            "SELECT id, name, password, state FROM User WHERE name=?",
+            asio::use_awaitable);
+
+        mysql::results result;
+        co_await conn.async_execute(stmt.bind(name), result, asio::use_awaitable);
+
+        auto rows = result.rows();
+        if (!rows.empty())
         {
-            MYSQL_RES *res = mysql->query(sql);
-            if (res != nullptr)
-            {
-                MYSQL_ROW row = mysql_fetch_row(res);
-                if (row != nullptr)
-                {
-                    User user;
-                    user.setId(atoi(row[0]));
-                    user.setName(row[1]);
-                    user.setPwd(row[2]);
-                    user.setState(row[3]);
-                    mysql_free_result(res);
-                    return user;
-                }
-                mysql_free_result(res);
-            }
+            const auto& row = rows[0];
+            User user;
+            user.setId(static_cast<int>(row[0].as_int64()));
+            user.setName(std::string(row[1].as_string()));
+            user.setPwd(std::string(row[2].as_string()));
+            user.setState(std::string(row[3].as_string()));
+            co_return user;
         }
-        return User();
+        co_return User();
     }
 
     // 根据用户id返回用户状态
-    string queryState(const int id)
+    asio::awaitable<string> queryState(const int id)
     {
-        string sql = "select state from User where id = " + to_string(id);
+        auto guard = co_await AsyncConnectionGuard::create();
+        if (!guard->valid())
+            co_return string();
 
-        ConnectionGuard guard;
-        MySQL* mysql = guard.get();
-        if (mysql)
+        auto& conn = guard->connection();
+
+        auto stmt = co_await conn.async_prepare_statement(
+            "SELECT state FROM User WHERE id=?",
+            asio::use_awaitable);
+
+        mysql::results result;
+        co_await conn.async_execute(stmt.bind(id), result, asio::use_awaitable);
+
+        auto rows = result.rows();
+        if (!rows.empty())
         {
-            MYSQL_RES *res = mysql->query(sql);
-            if (res != nullptr)
-            {
-                MYSQL_ROW row = mysql_fetch_row(res);
-                if (row != nullptr)
-                {
-                    string ret = row[0];
-                    mysql_free_result(res);
-                    return ret;
-                }
-                mysql_free_result(res);
-            }
+            co_return std::string(rows[0][0].as_string());
         }
-        return string();
+        co_return string();
     }
 };

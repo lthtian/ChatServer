@@ -26,30 +26,6 @@ namespace asio = boost::asio;
 // Timestamp类型替代muduo::Timestamp
 using Timestamp = std::chrono::steady_clock::time_point;
 
-// 全局数据库线程池（替代 WorkerThreadPool，用于包装阻塞 DB 操作）
-inline asio::thread_pool& db_pool() {
-    static asio::thread_pool pool(4);
-    return pool;
-}
-
-// 将阻塞函数投递到 db_pool 线程池执行并 co_await 结果
-template<typename Func>
-auto run_on_db(Func func) -> asio::awaitable<decltype(func())> {
-    using R = decltype(func());
-    co_return co_await asio::co_spawn(
-        db_pool().get_executor(),
-        [f = std::move(func)]() mutable -> asio::awaitable<R> {
-            if constexpr (std::is_void_v<R>) {
-                f();
-                co_return;
-            } else {
-                co_return f();
-            }
-        },
-        asio::use_awaitable
-    );
-}
-
 // 表示处理消息的事件回调方法类型（协程化）
 // 只要是给网络层的回调函数就必须符合这个函数签名
 using MsgHandler = std::function<asio::awaitable<void>(const Session::Ptr &session, json js, Timestamp time)>;
