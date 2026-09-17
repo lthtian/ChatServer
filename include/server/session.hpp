@@ -1,3 +1,5 @@
+// ABOUTME: Owns a chat control connection and its ordered writes.
+// ABOUTME: Delivers parsed requests with bounded receive and send buffers.
 #pragma once
 
 #include <boost/asio.hpp>
@@ -24,6 +26,7 @@ public:
     ~Session();
 
     void start();
+    void stop() { close(); }
     void send(const std::string &msg);
     std::string remote_endpoint() const;
     bool connected() const { return !closed_; }
@@ -39,4 +42,5 @@ private:
     std::string recvBuf_;
     std::atomic<bool> closed_{false};
     std::queue<std::string> writeQueue_;
+    std::size_t queued_bytes_ = 0;
 };

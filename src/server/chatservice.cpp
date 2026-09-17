@@ -1,7 +1,10 @@
+// ABOUTME: Handles authenticated chat sessions and dispatches conversation operations.
+// ABOUTME: Delivers messages through local connections and Redis subscriptions.
 #include "chatservice.hpp"
 #include "public.hpp"
 #include "async_connectionpool.hpp"
 #include "log.hpp"
+#include "media_service.hpp"
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 using namespace std;
@@ -14,6 +17,9 @@ ChatService *ChatService::instance()
 
 ChatService::ChatService()
 {
+    _mhm.emplace(26, [this](const Session::Ptr& session, json request, Timestamp) -> asio::awaitable<void> {
+        co_await mediaRequest(session, std::move(request));
+    });
     // 数据库连接池配置（实际初始化在 main.cpp 中异步执行）
     // 此处只注册 handler
 
@@ -73,7 +79,11 @@ ChatService::ChatService()
 // 异步初始化 Redis（在 init_pool 协程中调用，服务器启动前完成）
 asio::awaitable<bool> ChatService::init_redis()
 {
-    bool ok = co_await _redis.connect("127.0.0.1", 6379);
+    const char* port = std::getenv("CHAT_REDIS_PORT");
+    int redis_port = 6379;
+    if (port) redis_port = std::stoi(port);
+    if (redis_port < 1 || redis_port > 65535) throw std::invalid_argument("Invalid Redis port");
+    bool ok = co_await _redis.connect("127.0.0.1", static_cast<std::uint16_t>(redis_port));
     if (ok)
     {
         _redis.set_notify_handler(
@@ -127,6 +137,10 @@ MsgHandler ChatService::getHandler(int msgid)
 
 asio::awaitable<void> ChatService::login(const Session::Ptr &session, json js, Timestamp time)
 {
+    if (actor(session) > 0) {
+        session->send(json{{"msgid", 2}, {"errno", 1}, {"errmsg", "请先断开当前登录连接"}}.dump());
+        co_return;
+    }
     try
     {
     string name = js["username"];
@@ -178,6 +192,50 @@ asio::awaitable<void> ChatService::login(const Session::Ptr &session, json js, T
     catch (const std::exception& e)
     {
         LOG_ERROR << "[LOGIN] Exception: " << e.what();
+    }
+}
+
+int ChatService::actor(const Session::Ptr& session) const {
+    const auto found = _connUserMap.find(session);
+    return found == _connUserMap.end() ? 0 : found->second;
+}
+
+asio::awaitable<void> ChatService::mediaRequest(const Session::Ptr& session, json request) {
+    const auto request_id = request.contains("request_id") && request["request_id"].is_string()
+        ? request["request_id"].get<std::string>() : std::string();
+    json response = {{"msgid", 27}, {"request_id", request_id.size() <= 64 ? request_id : ""}, {"ok", false}};
+    const int sender = actor(session);
+    try {
+        if (sender == 0) throw chat::media::MediaError("unauthorized");
+        if (!media_service_) throw chat::media::MediaError("unavailable");
+        const auto id = request.at("request_id").get<std::string>();
+        if (id.empty() || id.size() > 64) throw chat::media::MediaError("invalid_argument");
+        response["data"] = co_await media_service_->request(sender, session, request);
+        response["ok"] = true;
+    } catch (const chat::media::MediaError& error) { response["error"] = error.what(); }
+      catch (const json::exception&) { response["error"] = "invalid_argument"; }
+      catch (const std::exception&) { response["error"] = "unavailable"; }
+    session->send(response.dump());
+    if (response["ok"] != true || request.value("op", "") != "publish" ||
+        !response["data"].value("created", false)) co_return;
+    try {
+        const bool group = request["conversation"]["is_group"];
+        const int target = request["conversation"]["target"];
+        const auto recipients = group ? co_await _groupModel.queryGroupUsersById(target, sender)
+                                      : std::vector<int>{target};
+        for (const int recipient : recipients) {
+            json event = {{"msgid", 28}, {"message", response["data"]["message"]},
+                {"conversation", {{"is_group", group}, {"target", group ? target : sender}}}};
+            const auto connection = _userConnMap.find(recipient);
+            if (connection != _userConnMap.end()) connection->second->send(event.dump());
+            else {
+                _redis.publish(recipient, event.dump());
+                const auto key = std::to_string(recipient) + "-" + std::to_string(group ? target : sender) + (group ? "-group" : "");
+                co_await _newMsgModel.addNewMsgByKey(key);
+            }
+        }
+    } catch (const std::exception&) {
+        LOG_ERROR << "[MEDIA] Message committed; live notification failed";
     }
 }
 
@@ -545,14 +603,16 @@ void ChatService::clientCloseException(const Session::Ptr &session)
     _redis.unsubscribe(user.getId());
 }
 
-void ChatService::reset()
+asio::awaitable<void> ChatService::reset()
 {
-    // 异步重置状态（fire-and-forget，通过 co_spawn 投递）
-    asio::co_spawn(AsyncConnectionPool::instance()->get_executor(),
-        [this]() -> asio::awaitable<void> {
-            co_await _userModel.resetState();
-        },
-        asio::detached);
+    co_await _userModel.resetState();
+}
+
+void ChatService::stop()
+{
+    const auto sessions = _userConnMap;
+    for (const auto& [id, session] : sessions) session->stop();
+    _redis.close();
 }
 
 asio::awaitable<void> ChatService::removeFriend(const Session::Ptr &session, json js, Timestamp time)

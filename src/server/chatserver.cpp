@@ -1,3 +1,5 @@
+// ABOUTME: Accepts chat sockets and dispatches their requests to the chat service.
+// ABOUTME: Closes the listener during orderly process shutdown.
 #include "chatserver.hpp"
 #include "chatservice.hpp"
 #include <iostream>
@@ -10,6 +12,11 @@ ChatServer::ChatServer(asio::io_context &ioc, const std::string &ip, uint16_t po
 }
 
 ChatServer::~ChatServer()
+{
+    stop();
+}
+
+void ChatServer::stop()
 {
     boost::system::error_code ec;
     acceptor_.close(ec);

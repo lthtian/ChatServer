@@ -1,3 +1,5 @@
+// ABOUTME: Bridges Redis publish and subscribe connections into the chat event loop.
+// ABOUTME: Owns hiredis contexts and releases them before the executor shuts down.
 #ifndef REDIS_H
 #define REDIS_H
 
@@ -22,6 +24,7 @@ class Redis
 public:
     Redis();
     ~Redis();
+    void close();
 
     // 异步连接 Redis 服务器（同时建立 publish 和 subscribe 两个连接）
     asio::awaitable<bool> connect(const string &host, uint16_t port);

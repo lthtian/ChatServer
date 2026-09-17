@@ -1,3 +1,5 @@
+// ABOUTME: Manages the bounded MySQL connection pool and waiter wakeups.
+// ABOUTME: Recreates connections closed during failed transactions.
 #include "async_connectionpool.hpp"
 #include "log.hpp"
 #include <iostream>
@@ -11,6 +13,11 @@ AsyncConnectionPool* AsyncConnectionPool::instance()
 
 AsyncConnectionPool::~AsyncConnectionPool()
 {
+    close();
+}
+
+void AsyncConnectionPool::close()
+{
     // 关闭所有连接
     std::lock_guard<std::mutex> lock(mutex_);
     while (!pool_.empty())
@@ -20,7 +27,7 @@ AsyncConnectionPool::~AsyncConnectionPool()
         if (conn)
         {
             boost::system::error_code ec;
-            conn->close();
+            conn->stream().close(ec);
         }
     }
 }
@@ -51,6 +58,7 @@ asio::awaitable<void> AsyncConnectionPool::init(asio::any_io_executor executor,
         }
     }
 
+    if (getAvailableCount() == 0) throw std::runtime_error("Database unavailable");
     initialized_ = true;
     LOG_INFO << "AsyncConnectionPool initialized with " << getAvailableCount() << " connections.";
 }
@@ -139,6 +147,12 @@ void AsyncConnectionPool::return_connection(std::shared_ptr<mysql::tcp_connectio
         return;
     }
 
+    if (!conn->stream().is_open())
+    {
+        asio::co_spawn(executor_, replenish(), asio::detached);
+        return;
+    }
+
     std::lock_guard<std::mutex> lock(mutex_);
     if (!waiters_.empty())
     {
@@ -146,12 +160,29 @@ void AsyncConnectionPool::return_connection(std::shared_ptr<mysql::tcp_connectio
         auto timer = waiters_.front();
         waiters_.pop();
         pool_.push(std::move(conn));
-        timer->cancel();
+        while (timer->cancel() == 0 && !waiters_.empty())
+        {
+            timer = waiters_.front();
+            waiters_.pop();
+        }
     }
     else
     {
         pool_.push(std::move(conn));
     }
+}
+
+asio::awaitable<void> AsyncConnectionPool::replenish()
+{
+    asio::steady_timer retry(executor_);
+    while (true)
+    {
+        auto connection = co_await create_connection();
+        if (connection) { return_connection(std::move(connection)); co_return; }
+        retry.expires_after(std::chrono::seconds(2));
+        co_await retry.async_wait(asio::use_awaitable);
+    }
+    while (!waiters_.empty()) waiters_.pop();
 }
 
 int AsyncConnectionPool::getAvailableCount()

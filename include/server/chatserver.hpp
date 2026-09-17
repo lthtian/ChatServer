@@ -1,3 +1,5 @@
+// ABOUTME: Accepts client control connections on the configured TCP endpoint.
+// ABOUTME: Coordinates listener lifetime with the shared chat event loop.
 #pragma once
 
 // 网络模块
@@ -15,6 +17,7 @@ public:
     ChatServer(asio::io_context &ioc, const std::string &ip, uint16_t port);
     ~ChatServer();
     void start();
+    void stop();
 
 private:
     asio::awaitable<void> do_accept();

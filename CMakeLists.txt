@@ -1,3 +1,5 @@
+# ABOUTME: Configures the chat server and its shared media processing library.
+# ABOUTME: Resolves Linux networking, database and image dependencies.
 cmake_minimum_required(VERSION 3.16)
 project(chat)
 
@@ -29,6 +31,8 @@ include_directories(${PROJECT_SOURCE_DIR}/include/server/db)
 include_directories(${PROJECT_SOURCE_DIR}/include/server/model)
 include_directories(${PROJECT_SOURCE_DIR}/include/server/redis)
 include_directories(${PROJECT_SOURCE_DIR}/thirdparty)
+include_directories(${PROJECT_SOURCE_DIR}/media/include)
 
 # 先加载子目录
+add_subdirectory(media)
 add_subdirectory(src)

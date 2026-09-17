@@ -1,3 +1,5 @@
+// ABOUTME: Pools asynchronous MySQL connections for chat requests.
+// ABOUTME: Wakes waiting borrowers and replenishes unusable connections.
 #pragma once
 
 // 异步MySQL连接池（基于boost::mysql）
@@ -44,6 +46,7 @@ public:
 
     // 获取当前连接池状态
     int getAvailableCount();
+    void close();
 
     // 获取执行器（用于非协程上下文的 co_spawn fire-and-forget）
     asio::any_io_executor get_executor() { return executor_; }
@@ -54,6 +57,7 @@ private:
 
     // 异步创建新连接
     asio::awaitable<std::shared_ptr<mysql::tcp_connection>> create_connection();
+    asio::awaitable<void> replenish();
 
     // 执行器（用于创建新连接和定时器）
     asio::any_io_executor executor_;

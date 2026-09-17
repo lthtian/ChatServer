@@ -1,3 +1,5 @@
+// ABOUTME: Delivers Redis notifications through Asio readiness callbacks.
+// ABOUTME: Manages the lifetime of hiredis sockets and event registrations.
 #include "redis.hpp"
 #include "log.hpp"
 #include <iostream>
@@ -5,6 +7,11 @@
 Redis::Redis() = default;
 
 Redis::~Redis()
+{
+    close();
+}
+
+void Redis::close()
 {
     // 清理 subscribe 异步连接
     if (sd_ && sd_->is_open())

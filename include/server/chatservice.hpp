@@ -1,3 +1,5 @@
+// ABOUTME: Dispatches chat requests for authenticated client sessions.
+// ABOUTME: Coordinates message persistence, presence and recipient delivery.
 #pragma once
 
 // 业务模块(单例模式)
@@ -21,6 +23,7 @@ using json = nlohmann::json;
 #include "redis.hpp"
 
 namespace asio = boost::asio;
+namespace chat::media { class MediaService; }
 
 // Timestamp类型替代muduo::Timestamp
 using Timestamp = std::chrono::steady_clock::time_point;
@@ -37,7 +40,8 @@ public:
     // 获取消息类型对应的处理函数
     MsgHandler getHandler(int msgid);
     // 服务器异常退出重置
-    void reset();
+    asio::awaitable<void> reset();
+    void stop();
     // 处理客户端异常退出
     void clientCloseException(const Session::Ptr &session);
     // 处理消息队列中有订阅的情况
@@ -45,6 +49,9 @@ public:
 
     // 异步初始化 Redis 连接（在 init_pool 协程中调用，确保服务器启动前完成）
     asio::awaitable<bool> init_redis();
+    void setMediaService(chat::media::MediaService* service) { media_service_ = service; }
+    int actor(const Session::Ptr& session) const;
+    asio::awaitable<void> mediaRequest(const Session::Ptr& session, json request);
 
     // 以下编写各种业务处理协程函数
     // 处理登录业务
@@ -112,4 +119,5 @@ private:
     ImageModel _imageModel;
     // redis对象
     Redis _redis;
+    chat::media::MediaService* media_service_ = nullptr;
 };

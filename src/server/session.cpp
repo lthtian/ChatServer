@@ -1,3 +1,5 @@
+// ABOUTME: Frames JSON control messages and serializes socket writes.
+// ABOUTME: Closes disconnected clients and connections exceeding buffer limits.
 #include "session.hpp"
 #include <iostream>
 
@@ -38,6 +40,8 @@ void Session::send(const std::string &msg)
         {
             if (self->closed_.load())
                 return;
+            if (self->queued_bytes_ + msg.size() > 4 * 1024 * 1024) { self->close(); return; }
+            self->queued_bytes_ += msg.size();
             self->writeQueue_.push(msg);
             if (self->writeQueue_.size() == 1)
             {
@@ -65,6 +69,7 @@ asio::awaitable<void> Session::read_loop()
             std::size_t n = co_await socket_.async_read_some(
                 asio::buffer(read_buf), asio::use_awaitable);
             recvBuf_.append(read_buf, n);
+            if (recvBuf_.size() > 1024 * 1024) break;
 
             // Brace-matching JSON extraction (ported from original ChatServer::onMessage)
             size_t start_pos = 0;
@@ -148,6 +153,7 @@ void Session::do_write()
                 self->close();
                 return;
             }
+            self->queued_bytes_ -= self->writeQueue_.front().size();
             self->writeQueue_.pop();
             if (!self->writeQueue_.empty())
             {
