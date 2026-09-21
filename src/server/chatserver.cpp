@@ -20,6 +20,8 @@ void ChatServer::stop()
 {
     boost::system::error_code ec;
     acceptor_.close(ec);
+    const auto sessions = sessions_;
+    for (const auto &session : sessions) session->stop();
 }
 
 void ChatServer::start()
@@ -32,6 +34,7 @@ asio::awaitable<void> ChatServer::do_accept()
     while (true)
     {
         auto socket = co_await acceptor_.async_accept(asio::use_awaitable);
+        if (!acceptor_.is_open()) co_return;
 
         auto session = std::make_shared<Session>(
             std::move(socket),
@@ -41,10 +44,12 @@ asio::awaitable<void> ChatServer::do_accept()
                 co_await handler(s, std::move(js), std::chrono::steady_clock::now());
             },
             // CloseCallback: 连接断开时通知业务层
-            [](const Session::Ptr &s) {
+            [this](const Session::Ptr &s) {
+                sessions_.erase(s);
                 ChatService::instance()->clientCloseException(s);
             }
         );
+        sessions_.insert(session);
         session->start();
     }
 }

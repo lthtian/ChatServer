@@ -5,6 +5,7 @@
 // 网络模块
 
 #include <boost/asio.hpp>
+#include <unordered_set>
 
 namespace asio = boost::asio;
 using asio::ip::tcp;
@@ -24,4 +25,5 @@ private:
 
     asio::io_context &ioc_;
     tcp::acceptor acceptor_;
+    std::unordered_set<Session::Ptr> sessions_;
 };

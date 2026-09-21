@@ -19,6 +19,7 @@ using json = nlohmann::json;
 using tcp = asio::ip::tcp;
 namespace {
 constexpr std::uint64_t kLimit = 20 * 1024 * 1024;
+constexpr std::uint64_t kFileLimit = 100 * 1024 * 1024;
 std::string Hex(const unsigned char* bytes, std::size_t count) {
     std::string result;
     for (std::size_t i = 0; i < count; ++i) {
@@ -120,6 +121,11 @@ asio::awaitable<json> MediaService::request(int actor, Session::Ptr session, jso
     if (!guard->valid()) throw MediaError("unavailable");
     MediaRepository repository(guard->connection());
     const auto op = input.at("op").get<std::string>();
+    if (op == "send_text") co_return co_await repository.send_text(actor,
+        ParseConversation(input.at("conversation")), input.at("client_msg_id"), input.at("text"));
+    if (op == "sync") co_return co_await repository.sync(actor,
+        ParseConversation(input.at("conversation")), input.at("direction"),
+        input.value("cursor", std::int64_t{0}), input.value("through", std::int64_t{-1}), input.value("limit", 50));
     if (op == "history") co_return co_await repository.history(actor,
         ParseConversation(input.at("conversation")), input.value("before_id", 0), input.value("limit", 50));
     if (op == "publish") co_return co_await repository.publish(actor,
@@ -130,6 +136,7 @@ asio::awaitable<json> MediaService::request(int actor, Session::Ptr session, jso
         const auto variant = input.at("variant").get<std::string>();
         if (variant != "original" && variant != "thumbnail") throw MediaError("invalid_argument");
         const auto media = co_await repository.access(actor, conversation, input.at("media_id"));
+        if (media["kind"] == "file" && variant != "original") throw MediaError("invalid_argument");
         const bool original = variant == "original";
         co_return json{{"download", descriptor({actor, session, conversation, media["media_id"], variant, false, deadline})},
             {"bytes", media[original ? "actual_bytes" : "thumbnail_bytes"]},
@@ -147,9 +154,10 @@ asio::awaitable<json> MediaService::request(int actor, Session::Ptr session, jso
         co_return json::object();
     }
     json media;
-    if (op == "begin") {
-        const UploadIntent intent{ParseConversation(input.at("conversation")), input.at("client_msg_id"),
+    if (op == "begin" || op == "begin_file") {
+        UploadIntent intent{ParseConversation(input.at("conversation")), input.at("client_msg_id"),
             input.at("bytes").get<std::uint64_t>(), input.at("sha256")};
+        if (op == "begin_file") { intent.kind = "file"; intent.name = input.at("name").get<std::string>(); }
         media = co_await repository.begin(actor, intent, Random(16), "disk");
     } else if (op == "status" || op == "retry") {
         media = co_await repository.owned(actor, input.at("media_id"));
@@ -197,7 +205,7 @@ asio::awaitable<void> MediaService::serve(tcp::socket socket) {
     try {
         beast::flat_buffer buffer(65536);
         http::request_parser<http::buffer_body> parser;
-        parser.header_limit(8192); parser.body_limit(kLimit);
+        parser.header_limit(8192); parser.body_limit(kFileLimit);
         stream.expires_after(std::chrono::seconds(30));
         co_await http::async_read_header(stream, buffer, parser, asio::use_awaitable);
         const auto auth = std::string(parser.get()[http::field::authorization]);
@@ -248,9 +256,9 @@ asio::awaitable<void> MediaService::upload(beast::tcp_stream& stream, beast::fla
     Cleanup release{[this, id] { active_.erase(id); }};
     std::exception_ptr failure;
     try {
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(3);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(30);
         auto upload = co_await asio::co_spawn(workers_, Work<std::shared_ptr<DiskUpload>>([this, media, id] {
-            return store_.Begin(id + "/original", media["expected_bytes"], kLimit);
+            return store_.Begin(id + "/original", media["expected_bytes"], media["kind"] == "file" ? kFileLimit : kLimit);
         }), asio::use_awaitable);
         std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> hash(EVP_MD_CTX_new(), EVP_MD_CTX_free);
         if (!hash || EVP_DigestInit_ex(hash.get(), EVP_sha256(), nullptr) != 1) throw MediaError("unavailable");
@@ -276,6 +284,13 @@ asio::awaitable<void> MediaService::upload(beast::tcp_stream& stream, beast::fla
             MediaRepository repository(guard->connection());
             if (!co_await repository.start_processing(ticket.actor, id)) throw MediaError("state_conflict");
         }
+        if (media["kind"] == "file") {
+            co_await asio::co_spawn(workers_, Work<bool>([upload] { upload->Commit(); return true; }), asio::use_awaitable);
+            auto guard = co_await AsyncConnectionGuard::create();
+            if (!guard->valid()) throw MediaError("unavailable");
+            MediaRepository repository(guard->connection());
+            co_await repository.ready_file(ticket.actor, id, media["expected_bytes"]);
+        } else {
         auto thumbnail = co_await asio::co_spawn(workers_, Work<Thumbnail>([this, upload, id] {
             upload->Commit();
             auto input = store_.Open(id + "/original");
@@ -289,6 +304,7 @@ asio::awaitable<void> MediaService::upload(beast::tcp_stream& stream, beast::fla
         if (!guard->valid()) throw MediaError("unavailable");
         MediaRepository repository(guard->connection());
         co_await repository.ready(ticket.actor, id, std::move(thumbnail), media["expected_bytes"]);
+        }
     } catch (...) { failure = std::current_exception(); }
     if (failure) {
         try {
@@ -315,6 +331,7 @@ asio::awaitable<void> MediaService::download(beast::tcp_stream& stream, Ticket t
     response.set(http::field::content_type, media[original ? "mime" : "thumbnail_mime"].get<std::string>());
     response.set(http::field::cache_control, "private, no-store");
     response.set("X-Content-Type-Options", "nosniff");
+    if (media["kind"] == "file") response.set(http::field::content_disposition, "attachment");
     response.content_length(media[original ? "actual_bytes" : "thumbnail_bytes"].get<std::uint64_t>());
     response.keep_alive(false);
     http::response_serializer<http::empty_body> serializer(response);

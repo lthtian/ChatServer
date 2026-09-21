@@ -216,7 +216,8 @@ asio::awaitable<void> ChatService::mediaRequest(const Session::Ptr& session, jso
       catch (const json::exception&) { response["error"] = "invalid_argument"; }
       catch (const std::exception&) { response["error"] = "unavailable"; }
     session->send(response.dump());
-    if (response["ok"] != true || request.value("op", "") != "publish" ||
+    const auto operation = request.value("op", "");
+    if (response["ok"] != true || (operation != "publish" && operation != "send_text") ||
         !response["data"].value("created", false)) co_return;
     try {
         const bool group = request["conversation"]["is_group"];

@@ -105,7 +105,7 @@ std::unique_ptr<DiskUpload> DiskStore::Begin(std::string_view key,
                                             std::uint64_t expected_bytes,
                                             std::uint64_t max_bytes) const {
   const auto destination = ObjectPath(key);
-  if (expected_bytes == 0 || expected_bytes > max_bytes) {
+  if (expected_bytes > max_bytes) {
     throw std::invalid_argument("Invalid upload size");
   }
   CreateDirectories(destination.parent_path());

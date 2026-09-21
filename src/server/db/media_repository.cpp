@@ -100,7 +100,7 @@ const std::string kMediaSelect =
     "SELECT media_id,owner_id,client_msg_id,chatkey,isgroup,state,provider,original_key,"
     "thumbnail_key,expected_bytes,actual_bytes,sha256,mime,width,height,thumbnail_mime,"
     "thumbnail_bytes,thumbnail_width,thumbnail_height,failure_code,"
-    "CAST(UNIX_TIMESTAMP(expires_at)*1000 AS UNSIGNED),expires_at<=CURRENT_TIMESTAMP(6) "
+    "CAST(UNIX_TIMESTAMP(expires_at)*1000 AS UNSIGNED),expires_at<=CURRENT_TIMESTAMP(6),kind,name "
     "FROM Media ";
 
 json Media(mysql::row_view row) {
@@ -108,7 +108,7 @@ json Media(mysql::row_view row) {
         "media_id", "owner_id", "client_msg_id", "chatkey", "isgroup", "state", "provider",
         "original_key", "thumbnail_key", "expected_bytes", "actual_bytes", "sha256", "mime",
         "width", "height", "thumbnail_mime", "thumbnail_bytes", "thumbnail_width",
-        "thumbnail_height", "failure_code", "expires_at", "expired"};
+        "thumbnail_height", "failure_code", "expires_at", "expired", "kind", "name"};
     json media = json::object();
     for (std::size_t index = 0; index < std::size(names); ++index) {
         media[names[index]] = Value(row[index]);
@@ -120,19 +120,26 @@ const std::string kMessageSelect =
     "SELECT h.id,h.userid,u.name,h.kind,h.message,"
     "CAST(UNIX_TIMESTAMP(h.time)*1000 AS UNSIGNED),h.client_msg_id,"
     "m.media_id,m.mime,m.actual_bytes,m.width,m.height,m.thumbnail_mime,"
-    "m.thumbnail_bytes,m.thumbnail_width,m.thumbnail_height "
+    "m.thumbnail_bytes,m.thumbnail_width,m.thumbnail_height,h.conversation_seq,m.name,m.sha256 "
     "FROM History h JOIN User u ON u.id=h.userid LEFT JOIN Media m ON m.media_id=h.media_id ";
 
 json Message(mysql::row_view row) {
     json message = {{"message_id", std::to_string(row[0].as_int64())},
         {"sender_id", Value(row[1])}, {"sender_name", Value(row[2])},
         {"kind", Value(row[3])}, {"text", Value(row[4])}, {"time", Value(row[5])},
-        {"client_msg_id", Value(row[6])}};
+        {"client_msg_id", Value(row[6])}, {"sequence", std::to_string(row[16].as_int64())}};
     if (!row[7].is_null()) {
         message["media"] = {{"media_id", Value(row[7])}, {"mime", Value(row[8])},
             {"bytes", Value(row[9])}, {"width", Value(row[10])}, {"height", Value(row[11])},
             {"thumbnail", {{"mime", Value(row[12])}, {"bytes", Value(row[13])},
                            {"width", Value(row[14])}, {"height", Value(row[15])}}}};
+        message["media"]["sha256"] = Value(row[18]);
+        if (message["kind"] == "file") {
+            message["media"]["name"] = Value(row[17]);
+            message["media"].erase("thumbnail");
+            message["media"].erase("width");
+            message["media"].erase("height");
+        }
     }
     return message;
 }
@@ -160,23 +167,30 @@ asio::awaitable<void> MediaRepository::authorize(int actor, Conversation convers
 asio::awaitable<json> MediaRepository::begin(int actor, UploadIntent intent,
                                            std::string media_id, std::string provider) {
     if (!ClientId(intent.client_msg_id) || !Hex(media_id, 32) || !Hex(intent.sha256, 64) ||
-        !intent.bytes || intent.bytes > ImageLimits{}.max_bytes ||
+        (intent.kind != "image" && intent.kind != "file") ||
+        (intent.kind == "image" && (!intent.bytes || intent.bytes > ImageLimits{}.max_bytes)) ||
+        (intent.kind == "file" && (intent.bytes > 100 * 1024 * 1024 || intent.name.empty() ||
+          intent.name.size() > 255 || intent.name == "." || intent.name == ".." ||
+          std::any_of(intent.name.begin(), intent.name.end(), [](unsigned char c) {
+              return c < 32 || c == 127 || c == '/' || c == '\\' || c == ':';
+          }))) ||
         (provider != "disk" && provider != "oss")) throw MediaError("invalid_argument");
     co_await authorize(actor, intent.conversation);
     const auto key = intent.conversation.key(actor);
     co_await Execute(connection_,
         "INSERT INTO Media(media_id,owner_id,client_msg_id,chatkey,isgroup,state,provider,"
-        "original_key,expected_bytes,sha256,expires_at) "
-        "VALUES(?,?,?,?,?,'uploading',?,?,?,?,CURRENT_TIMESTAMP(6)+INTERVAL 24 HOUR) "
+        "original_key,expected_bytes,sha256,kind,name,expires_at) "
+        "VALUES(?,?,?,?,?,'uploading',?,?,?,?,?,?,CURRENT_TIMESTAMP(6)+INTERVAL 24 HOUR) "
         "ON DUPLICATE KEY UPDATE media_id=media_id", media_id, actor, intent.client_msg_id,
         key, intent.conversation.is_group ? 1 : 0, provider, media_id + "/original",
-        intent.bytes, intent.sha256);
+        intent.bytes, intent.sha256, intent.kind, intent.name);
     const auto found = co_await Execute(connection_, kMediaSelect +
         "WHERE owner_id=? AND client_msg_id=?", actor, intent.client_msg_id);
     if (found.rows().empty()) throw MediaError("conflict");
     auto media = Media(found.rows()[0]);
     if (media["chatkey"] != key || media["isgroup"] != (intent.conversation.is_group ? 1 : 0) ||
-        media["expected_bytes"] != intent.bytes || media["sha256"] != intent.sha256) {
+        media["expected_bytes"] != intent.bytes || media["sha256"] != intent.sha256 ||
+        media["kind"] != intent.kind || (intent.kind == "file" && media["name"] != intent.name)) {
         throw MediaError("conflict");
     }
     co_return media;
@@ -207,6 +221,14 @@ asio::awaitable<void> MediaRepository::ready(int actor, std::string media_id,
         thumbnail.source_width, thumbnail.source_height, media_id + "/thumbnail", thumbnail.mime,
         static_cast<std::uint64_t>(thumbnail.bytes.size()), thumbnail.width, thumbnail.height,
         actor, media_id, actual_bytes);
+    if (result.affected_rows() != 1) throw MediaError("state_conflict");
+}
+
+asio::awaitable<void> MediaRepository::ready_file(int actor, std::string media_id, std::uint64_t actual_bytes) {
+    const auto result = co_await Execute(connection_,
+        "UPDATE Media SET state='ready',actual_bytes=?,mime='application/octet-stream' "
+        "WHERE owner_id=? AND media_id=? AND kind='file' AND state='processing' AND expected_bytes=? "
+        "AND expires_at>CURRENT_TIMESTAMP(6)", actual_bytes, actor, media_id, actual_bytes);
     if (result.affected_rows() != 1) throw MediaError("state_conflict");
 }
 
@@ -279,8 +301,8 @@ asio::awaitable<json> MediaRepository::publish(int actor, Conversation conversat
         if (media["expired"] != 0) throw MediaError("expired");
         const auto inserted = co_await Execute(connection_,
             "INSERT INTO History(chatkey,userid,isgroup,message,kind,media_id,client_msg_id) "
-            "VALUES(?,?,?,'','image',?,?)", conversation.key(actor), actor,
-            conversation.is_group ? 1 : 0, media_id, client_msg_id);
+            "VALUES(?,?,?,'',?,?,?)", conversation.key(actor), actor,
+            conversation.is_group ? 1 : 0, media["kind"].get<std::string>(), media_id, client_msg_id);
         const auto sent = co_await Execute(connection_, kMessageSelect + "WHERE h.id=?",
                                            inserted.last_insert_id());
         co_return json{{"created", true}, {"message", Message(sent.rows()[0])}};
@@ -299,6 +321,68 @@ asio::awaitable<json> MediaRepository::history(int actor, Conversation conversat
     for (auto index = count; index > 0; --index) messages.push_back(Message(found.rows()[index - 1]));
     co_return json{{"messages", messages}, {"next_cursor", found.rows().size() > count
         ? std::to_string(found.rows()[count - 1][0].as_int64()) : ""}};
+}
+
+asio::awaitable<json> MediaRepository::send_text(int actor, Conversation conversation,
+                                               std::string client_msg_id, std::string text) {
+    if (!ClientId(client_msg_id) || text.empty() || text.size() > 16384) throw MediaError("invalid_argument");
+    co_return co_await Transaction(connection_, [&, actor]() -> asio::awaitable<json> {
+        // A sender lock serializes retries before their first consistent read.
+        co_await Execute(connection_, "SELECT id FROM User WHERE id=? FOR UPDATE", actor);
+        co_await authorize(actor, conversation);
+        const auto existing = co_await Execute(connection_, kMessageSelect +
+            "WHERE h.userid=? AND h.client_msg_id=?", actor, client_msg_id);
+        if (!existing.rows().empty()) {
+            const auto identity = co_await Execute(connection_,
+                "SELECT chatkey,isgroup FROM History WHERE userid=? AND client_msg_id=?", actor, client_msg_id);
+            const auto message = Message(existing.rows()[0]);
+            if (message["kind"] != "text" || message["text"] != text ||
+                Value(identity.rows()[0][0]) != conversation.key(actor) ||
+                Value(identity.rows()[0][1]) != (conversation.is_group ? 1 : 0)) throw MediaError("conflict");
+            co_return json{{"created", false}, {"message", message}};
+        }
+        const auto inserted = co_await Execute(connection_,
+            "INSERT INTO History(chatkey,userid,isgroup,message,kind,client_msg_id) VALUES(?,?,?,?,'text',?)",
+            conversation.key(actor), actor, conversation.is_group ? 1 : 0, text, client_msg_id);
+        const auto sent = co_await Execute(connection_, kMessageSelect + "WHERE h.id=?", inserted.last_insert_id());
+        co_return json{{"created", true}, {"message", Message(sent.rows()[0])}};
+    });
+}
+
+asio::awaitable<json> MediaRepository::sync(int actor, Conversation conversation, std::string direction,
+                                          std::int64_t cursor, std::int64_t through, int limit) {
+    if (cursor < 0 || through < -1 || limit < 1 || limit > 100 ||
+        (direction != "initial" && direction != "before" && direction != "after")) throw MediaError("invalid_argument");
+    co_await authorize(actor, conversation);
+    const auto key = conversation.key(actor);
+    const auto sequence = co_await Execute(connection_,
+        "SELECT last_sequence FROM ConversationSequence WHERE isgroup=? AND chatkey=?",
+        conversation.is_group ? 1 : 0, key);
+    const auto latest = sequence.rows().empty() ? std::int64_t{0} : sequence.rows()[0][0].as_int64();
+    if (through < 0) through = latest;
+    if (through > latest || cursor > latest + 1 || (direction == "after" && cursor > through)) throw MediaError("invalid_cursor");
+    const bool forward = direction == "after";
+    const auto ceiling = direction == "before" ? cursor - 1 : through;
+    if (ceiling < 0) throw MediaError("invalid_cursor");
+    auto query = kMessageSelect +
+        "WHERE h.chatkey=? AND h.isgroup=? AND h.conversation_seq>? AND h.conversation_seq<=? ORDER BY h.conversation_seq ";
+    query += forward ? "ASC LIMIT ?" : "DESC LIMIT ?";
+    const auto floor = forward ? cursor : std::int64_t{0};
+    const auto found = co_await Execute(connection_, query, key,
+        conversation.is_group ? 1 : 0, floor, ceiling, limit + 1);
+    const auto count = std::min(found.rows().size(), static_cast<std::size_t>(limit));
+    const bool more = found.rows().size() > count;
+    json messages = json::array();
+    for (std::size_t index = 0; index < count; ++index) {
+        messages.push_back(Message(found.rows()[forward ? index : count - 1 - index]));
+    }
+    std::int64_t lower = forward ? cursor + 1 : 1;
+    std::int64_t upper = ceiling;
+    if (more && count) {
+        if (forward) upper = found.rows()[count - 1][16].as_int64();
+        else lower = found.rows()[count - 1][16].as_int64();
+    }
+    co_return json{{"messages", messages}, {"lower", lower}, {"upper", upper}, {"through", through}, {"more", more}};
 }
 
 asio::awaitable<json> MediaRepository::access(int actor, Conversation conversation, std::string media_id) {
