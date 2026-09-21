@@ -1,8 +1,5 @@
 ﻿// ABOUTME: Defines private disk objects with bounded writes and immutable publication.
 // ABOUTME: Provides staging ownership so abandoned uploads are removed automatically.
-// copyright 2026 The Master Lu PC-Group Authors. All rights reserved.
-// author  jiadebin@ludashi.com
-// date 2026/09/16 16:16
 #ifndef CHAT_MEDIA_DISK_STORE_H_
 #define CHAT_MEDIA_DISK_STORE_H_
 

@@ -1,8 +1,5 @@
 ﻿// ABOUTME: Streams private image bytes using bounded HTTP transfers and expiring tickets.
 // ABOUTME: Validates hashes and decoded images before allowing message publication.
-// copyright 2026 The Master Lu PC-Group Authors. All rights reserved.
-// author  jiadebin@ludashi.com
-// date 2026/09/17 15:12
 #include "media_service.hpp"
 #include "async_connectionpool.hpp"
 #include "chatservice.hpp"

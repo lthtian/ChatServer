@@ -97,7 +97,9 @@ class MediaServiceTest(unittest.TestCase):
                 raise RuntimeError('server exited during startup:\n' + cls.log.read())
             time.sleep(.1)
         else:
-            raise RuntimeError('server startup timeout')
+            cls.log.flush()
+            cls.log.seek(0)
+            raise RuntimeError('server startup timeout:\n' + cls.log.read())
         cls.clients = [Client(('127.0.0.1', cls.control_port)) for _ in range(4)]
         for client in cls.clients:
             cls.addClassCleanup(client.socket.close)

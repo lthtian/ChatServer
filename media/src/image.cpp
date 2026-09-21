@@ -1,8 +1,5 @@
 ﻿// ABOUTME: Validates encoded images and produces bounded thumbnails.
 // ABOUTME: Enforces media limits before allocating decoded image pixels.
-// copyright 2026 The Master Lu PC-Group Authors. All rights reserved.
-// author  jiadebin@ludashi.com
-// date 2026/09/16 16:16
 #include "chat/media/image.h"
 
 #include <opencv2/imgcodecs.hpp>

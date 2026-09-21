@@ -1,8 +1,5 @@
 ﻿// ABOUTME: Defines authenticated media records and image message transactions.
 // ABOUTME: Uses one MySQL connection for each repository operation and transaction.
-// copyright 2026 The Master Lu PC-Group Authors. All rights reserved.
-// author  jiadebin@ludashi.com
-// date 2026/09/16 16:56
 #pragma once
 
 #include "chat/media/image.h"

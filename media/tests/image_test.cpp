@@ -1,8 +1,5 @@
 ﻿// ABOUTME: Exercises image processing using actual JPEG and PNG data.
 // ABOUTME: Checks display dimensions, transparency, orientation and input limits.
-// copyright 2026 The Master Lu PC-Group Authors. All rights reserved.
-// author  jiadebin@ludashi.com
-// date 2026/09/16 16:16
 #include "chat/media/image.h"
 
 #include <opencv2/core.hpp>

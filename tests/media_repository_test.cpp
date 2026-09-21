@@ -1,8 +1,5 @@
 ﻿// ABOUTME: Exercises media state and message transactions against a real MySQL server.
 // ABOUTME: Requires a disposable test database and verifies permission and retry behavior.
-// copyright 2026 The Master Lu PC-Group Authors. All rights reserved.
-// author  jiadebin@ludashi.com
-// date 2026/09/16 16:56
 #include "media_repository.hpp"
 #include <cstdlib>
 #include <iostream>

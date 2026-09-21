@@ -1,8 +1,5 @@
 ﻿// ABOUTME: Produces a thumbnail and JSON metadata for a local image file.
 // ABOUTME: Supplies a process boundary for desktop media processing tasks.
-// copyright 2026 The Master Lu PC-Group Authors. All rights reserved.
-// author  jiadebin@ludashi.com
-// date 2026/09/16 16:16
 #include "chat/media/disk_store.h"
 #include "chat/media/image.h"
 #include "json.hpp"

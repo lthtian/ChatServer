@@ -1,8 +1,5 @@
 ﻿// ABOUTME: Defines bounded static image processing and thumbnail results.
 // ABOUTME: Keeps image processing independent of networking and database state.
-// copyright 2026 The Master Lu PC-Group Authors. All rights reserved.
-// author  jiadebin@ludashi.com
-// date 2026/09/16 16:16
 #ifndef CHAT_MEDIA_IMAGE_H_
 #define CHAT_MEDIA_IMAGE_H_
 

@@ -1,8 +1,5 @@
 ﻿// ABOUTME: Tests disk publication and failures against real temporary files.
 // ABOUTME: Verifies upload isolation, limits, immutable objects and traversal rejection.
-// copyright 2026 The Master Lu PC-Group Authors. All rights reserved.
-// author  jiadebin@ludashi.com
-// date 2026/09/16 16:16
 #include "chat/media/disk_store.h"
 
 #include <array>

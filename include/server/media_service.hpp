@@ -1,8 +1,5 @@
 ﻿// ABOUTME: Authorizes short-lived image transfers and media control requests.
 // ABOUTME: Bounds network concurrency and runs disk and codec work off the chat loop.
-// copyright 2026 The Master Lu PC-Group Authors. All rights reserved.
-// author  jiadebin@ludashi.com
-// date 2026/09/17 15:12
 #pragma once
 #include "media_repository.hpp"
 #include "session.hpp"
