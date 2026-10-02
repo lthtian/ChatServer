@@ -1,5 +1,3 @@
-# ABOUTME: Exercises text acknowledgments and sequence-based synchronization against a real server.
-# ABOUTME: Reuses isolated MySQL, Redis and socket fixtures without touching production records.
 import uuid
 import unittest
 import media_service_test as media

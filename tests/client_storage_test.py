@@ -1,5 +1,3 @@
-# ABOUTME: Runs Windows client storage and rendering checks against an isolated Linux service.
-# ABOUTME: Cleans up temporary MySQL accounts and coordinates the offline window disconnection.
 import pathlib
 import subprocess
 import time

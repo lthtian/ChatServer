@@ -1,5 +1,3 @@
-# ABOUTME: Tests the running chat server against isolated MySQL and real HTTP transfers.
-# ABOUTME: Covers image publication, authorization, retries, history and invalid uploads.
 import base64
 import hashlib
 import json

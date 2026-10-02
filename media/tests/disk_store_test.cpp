@@ -1,6 +1,4 @@
-﻿// ABOUTME: Tests disk publication and failures against real temporary files.
-// ABOUTME: Verifies upload isolation, limits, immutable objects and traversal rejection.
-#include "chat/media/disk_store.h"
+﻿#include "chat/media/disk_store.h"
 
 #include <array>
 #include <functional>

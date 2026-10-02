@@ -1,5 +1,3 @@
-# ABOUTME: Validates media schema and message constraints in an isolated MySQL database.
-# ABOUTME: Creates a uniquely named test database and removes only that database afterward.
 import argparse
 import os
 import pathlib

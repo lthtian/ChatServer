@@ -1,5 +1,3 @@
-# ABOUTME: Runs the image command against real files and validates its JSON contract.
-# ABOUTME: Captures expected failures and ensures partial results are not published.
 import json
 import pathlib
 import struct

@@ -1,5 +1,3 @@
-# ABOUTME: Builds repository tests against the server's Boost.MySQL dependency.
-# ABOUTME: Keeps database verification independent of the running chat service.
 cmake_minimum_required(VERSION 3.16)
 project(chat_repository_tests LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)

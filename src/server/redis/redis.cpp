@@ -1,5 +1,3 @@
-// ABOUTME: Delivers Redis notifications through Asio readiness callbacks.
-// ABOUTME: Manages the lifetime of hiredis sockets and event registrations.
 #include "redis.hpp"
 #include "log.hpp"
 #include <iostream>

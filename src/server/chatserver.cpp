@@ -1,5 +1,3 @@
-// ABOUTME: Accepts chat sockets and dispatches their requests to the chat service.
-// ABOUTME: Closes the listener during orderly process shutdown.
 #include "chatserver.hpp"
 #include "chatservice.hpp"
 #include <iostream>

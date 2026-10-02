@@ -1,6 +1,4 @@
-﻿// ABOUTME: Validates encoded images and produces bounded thumbnails.
-// ABOUTME: Enforces media limits before allocating decoded image pixels.
-#include "chat/media/image.h"
+﻿#include "chat/media/image.h"
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>

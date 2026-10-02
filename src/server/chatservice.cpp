@@ -1,5 +1,3 @@
-// ABOUTME: Handles authenticated chat sessions and dispatches conversation operations.
-// ABOUTME: Delivers messages through local connections and Redis subscriptions.
 #include "chatservice.hpp"
 #include "public.hpp"
 #include "async_connectionpool.hpp"

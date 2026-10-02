@@ -1,5 +1,3 @@
-// ABOUTME: Starts the chat server and its configured database and media services.
-// ABOUTME: Coordinates asynchronous startup and process shutdown.
 #include "chatserver.hpp"
 #include "chatservice.hpp"
 #include "async_connectionpool.hpp"

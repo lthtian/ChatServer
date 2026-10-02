@@ -1,6 +1,4 @@
-﻿// ABOUTME: Stores immutable media objects beneath a private filesystem root.
-// ABOUTME: Publishes complete uploads without overwriting existing object keys.
-#include "chat/media/disk_store.h"
+﻿#include "chat/media/disk_store.h"
 
 #include <cerrno>
 #include <random>

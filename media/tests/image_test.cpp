@@ -1,6 +1,4 @@
-﻿// ABOUTME: Exercises image processing using actual JPEG and PNG data.
-// ABOUTME: Checks display dimensions, transparency, orientation and input limits.
-#include "chat/media/image.h"
+﻿#include "chat/media/image.h"
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>

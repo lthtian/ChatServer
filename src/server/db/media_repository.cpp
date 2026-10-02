@@ -1,6 +1,4 @@
-﻿// ABOUTME: Persists media lifecycle changes and idempotent image messages.
-// ABOUTME: Checks conversation membership before exposing media or history.
-#include "media_repository.hpp"
+﻿#include "media_repository.hpp"
 #include <algorithm>
 #include <functional>
 #include <string_view>

@@ -1,5 +1,3 @@
-// ABOUTME: Manages the bounded MySQL connection pool and waiter wakeups.
-// ABOUTME: Recreates connections closed during failed transactions.
 #include "async_connectionpool.hpp"
 #include "log.hpp"
 #include <iostream>

@@ -1,6 +1,4 @@
-﻿// ABOUTME: Defines private disk objects with bounded writes and immutable publication.
-// ABOUTME: Provides staging ownership so abandoned uploads are removed automatically.
-#ifndef CHAT_MEDIA_DISK_STORE_H_
+﻿#ifndef CHAT_MEDIA_DISK_STORE_H_
 #define CHAT_MEDIA_DISK_STORE_H_
 
 #include <cstdio>

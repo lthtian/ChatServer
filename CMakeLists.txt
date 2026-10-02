@@ -1,5 +1,3 @@
-# ABOUTME: Configures the chat server and its shared media processing library.
-# ABOUTME: Resolves Linux networking, database and image dependencies.
 cmake_minimum_required(VERSION 3.16)
 project(chat)
 

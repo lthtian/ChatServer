@@ -1,5 +1,3 @@
-# ABOUTME: Validates conversation ordering and rollback using an isolated real MySQL database.
-# ABOUTME: Exercises concurrent writers and migration backfill independently of the server binary.
 import subprocess
 import unittest
 import media_schema_test as schema

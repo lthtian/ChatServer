@@ -1,5 +1,3 @@
-# ABOUTME: Verifies orderly shutdown while an unauthenticated control connection remains open.
-# ABOUTME: Uses the real server and closes test sockets during cleanup even when shutdown fails.
 import signal
 import unittest
 import media_service_test as media

@@ -1,5 +1,3 @@
-# ABOUTME: Builds the image processing library independently of the chat server.
-# ABOUTME: Registers real image and filesystem tests for the media components.
 cmake_minimum_required(VERSION 3.16)
 project(chat_media LANGUAGES CXX)
 

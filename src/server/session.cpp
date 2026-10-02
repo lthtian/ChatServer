@@ -1,5 +1,3 @@
-// ABOUTME: Frames JSON control messages and serializes socket writes.
-// ABOUTME: Closes disconnected clients and connections exceeding buffer limits.
 #include "session.hpp"
 #include <iostream>
 

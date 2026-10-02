@@ -1,6 +1,4 @@
 
-# ABOUTME: Builds the chat service with image transfer and database components.
-# ABOUTME: Shares heavy Boost headers through a target precompiled header.
 # 准备生成可执行文件的所有源文件并且生成
 aux_source_directory(. SRC_LIST)
 aux_source_directory(./db DB_LIST)

@@ -1,6 +1,4 @@
-﻿// ABOUTME: Defines bounded static image processing and thumbnail results.
-// ABOUTME: Keeps image processing independent of networking and database state.
-#ifndef CHAT_MEDIA_IMAGE_H_
+﻿#ifndef CHAT_MEDIA_IMAGE_H_
 #define CHAT_MEDIA_IMAGE_H_
 
 #include <cstddef>

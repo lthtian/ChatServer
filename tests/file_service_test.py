@@ -1,5 +1,3 @@
-# ABOUTME: Verifies generic file publication and downloads against the actual chat service.
-# ABOUTME: Uses isolated MySQL records and real HTTP bytes to test metadata and access control.
 import hashlib
 import uuid
 import unittest

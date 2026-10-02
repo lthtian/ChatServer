@@ -1,6 +1,4 @@
-﻿// ABOUTME: Streams private image bytes using bounded HTTP transfers and expiring tickets.
-// ABOUTME: Validates hashes and decoded images before allowing message publication.
-#include "media_service.hpp"
+﻿#include "media_service.hpp"
 #include "async_connectionpool.hpp"
 #include "chatservice.hpp"
 #include <openssl/evp.h>
