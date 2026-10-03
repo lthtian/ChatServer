@@ -3,7 +3,10 @@
 #include "chatservice.hpp"
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <algorithm>
 #include <array>
+#include <charconv>
+#include <string_view>
 #include <functional>
 
 namespace chat::media {
@@ -15,6 +18,45 @@ using tcp = asio::ip::tcp;
 namespace {
 constexpr std::uint64_t kLimit = 20 * 1024 * 1024;
 constexpr std::uint64_t kFileLimit = 100 * 1024 * 1024;
+// HTTP 区间以字节为单位，与帧号和播放时间无关。
+struct ByteRange {
+    std::uint64_t offset = 0;  // 第一个响应字节在原文件中的偏移。
+    std::uint64_t length = 0;  // 本次响应体的字节数。
+    bool partial = false;     // 是否按 Range 返回 206。
+    bool satisfiable = true;  // false 对应有效但不可满足的区间。
+};
+
+ByteRange ParseRange(std::string_view header, std::uint64_t size) {
+    ByteRange result{0, size, false, true};
+    // 本接口支持单段 bytes；未知单位和多段请求按 HTTP 规则忽略，返回完整表示。
+    if (!header.starts_with("bytes=") || header.find(',') != header.npos) return result;
+    header.remove_prefix(6);
+    const auto dash = header.find('-');
+    if (dash == header.npos) throw MediaError("invalid_range");
+    const auto number = [](std::string_view text) {
+        std::uint64_t value = 0;
+        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+        if (text.empty() || parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size())
+            throw MediaError("invalid_range");
+        return value;
+    };
+    result.partial = true;
+    if (dash == 0) {
+        // bytes=-N 表示最后 N 个字节；N 大于文件时返回整个文件的 206 表示。
+        result.length = std::min(number(header.substr(1)), size);
+        result.offset = size - result.length;
+        result.satisfiable = result.length != 0;
+    } else {
+        result.offset = number(header.substr(0, dash));
+        const auto last = header.substr(dash + 1);
+        const auto end = last.empty() ? (size ? size - 1 : 0) : number(last);
+        if (!last.empty() && end < result.offset) throw MediaError("invalid_range");
+        result.satisfiable = result.offset < size;
+        result.length = result.satisfiable ? std::min(end, size - 1) - result.offset + 1 : 0;
+    }
+    return result;
+}
+
 std::string Hex(const unsigned char* bytes, std::size_t count) {
     std::string result;
     for (std::size_t i = 0; i < count; ++i) {
@@ -229,8 +271,10 @@ asio::awaitable<void> MediaService::serve(tcp::socket socket) {
             json result = {{"ok", true}};
             co_await Reply(stream, http::status::ok, std::move(result));
         } else {
-            response_started = true;
-            co_await download(stream, ticket, media);
+            // 没有实现表示验证器时，不满足 If-Range 条件，发送完整表示。
+            const auto range = parser.get()[http::field::if_range].empty()
+                ? std::string(parser.get()[http::field::range]) : std::string();
+            co_await download(stream, ticket, media, range, response_started);
         }
     } catch (const MediaError& failure) { error = failure.what(); }
       catch (const ImageError&) { error = "invalid_image"; }
@@ -316,32 +360,58 @@ asio::awaitable<void> MediaService::upload(beast::tcp_stream& stream, beast::fla
     }
 }
 
-asio::awaitable<void> MediaService::download(beast::tcp_stream& stream, Ticket ticket, json media) {
+asio::awaitable<void> MediaService::download(beast::tcp_stream& stream, Ticket ticket, json media,
+    std::string range_header, bool& response_started) {
     const bool original = ticket.variant == "original";
-    const auto key = media[original ? "original_key" : "thumbnail_key"].get<std::string>();
-    auto file = co_await asio::co_spawn(workers_, Work<std::shared_ptr<std::ifstream>>([this, key] {
-        return std::make_shared<std::ifstream>(store_.Open(key));
-    }), asio::use_awaitable);
-    http::response<http::empty_body> response(http::status::ok, 11);
-    response.set(http::field::content_type, media[original ? "mime" : "thumbnail_mime"].get<std::string>());
+    const auto total = media[original ? "actual_bytes" : "thumbnail_bytes"].get<std::uint64_t>();
+    const auto range = ParseRange(range_header, total);
+    http::response<http::empty_body> response(
+        !range.satisfiable ? http::status::range_not_satisfiable :
+        range.partial ? http::status::partial_content : http::status::ok, 11);
+    response.set(http::field::accept_ranges, "bytes");
     response.set(http::field::cache_control, "private, no-store");
     response.set("X-Content-Type-Options", "nosniff");
-    if (media["kind"] == "file") response.set(http::field::content_disposition, "attachment");
-    response.content_length(media[original ? "actual_bytes" : "thumbnail_bytes"].get<std::uint64_t>());
     response.keep_alive(false);
+    if (!range.satisfiable) {
+        response.set(http::field::content_range, "bytes */" + std::to_string(total));
+        response.content_length(0);
+        response_started = true;
+        co_await http::async_write(stream, response, asio::use_awaitable);
+        co_return;
+    }
+    const auto key = media[original ? "original_key" : "thumbnail_key"].get<std::string>();
+    auto file = co_await asio::co_spawn(workers_, Work<std::shared_ptr<std::ifstream>>([this, key, range, total] {
+        auto file = std::make_shared<std::ifstream>(store_.Open(key));
+        file->seekg(0, std::ios::end);
+        if (file->tellg() != static_cast<std::streamoff>(total)) throw MediaError("io_error");
+        file->seekg(static_cast<std::streamoff>(range.offset), std::ios::beg);
+        if (!*file) throw MediaError("io_error");
+        return file;
+    }), asio::use_awaitable);
+    response.set(http::field::content_type, media[original ? "mime" : "thumbnail_mime"].get<std::string>());
+    if (media["kind"] == "file") response.set(http::field::content_disposition, "attachment");
+    if (range.partial) {
+        response.set(http::field::content_range, "bytes " + std::to_string(range.offset) + "-" +
+            std::to_string(range.offset + range.length - 1) + "/" + std::to_string(total));
+    }
+    response.content_length(range.length);
     http::response_serializer<http::empty_body> serializer(response);
     stream.expires_after(std::chrono::seconds(30));
+    response_started = true;
     co_await http::async_write_header(stream, serializer, asio::use_awaitable);
+    // 一个响应只发送一次头；每次等待写完再复用缓冲，不让慢连接积压整份文件。
     std::array<char, 65536> bytes{};
-    while (true) {
-        const auto count = co_await asio::co_spawn(workers_, Work<std::size_t>([file, &bytes] {
-            file->read(bytes.data(), bytes.size());
-            if (file->bad()) throw MediaError("io_error");
-            return file->gcount();
+    auto remaining = range.length;
+    while (remaining != 0) {
+        const auto count = static_cast<std::size_t>(std::min<std::uint64_t>(bytes.size(), remaining));
+        co_await asio::co_spawn(workers_, Work<bool>([file, &bytes, count] {
+            file->read(bytes.data(), static_cast<std::streamsize>(count));
+            if (file->bad() || static_cast<std::size_t>(file->gcount()) != count) throw MediaError("io_error");
+            return true;
         }), asio::use_awaitable);
-        if (!count) break;
         stream.expires_after(std::chrono::seconds(30));
         co_await asio::async_write(stream, asio::buffer(bytes.data(), count), asio::use_awaitable);
+        remaining -= count;
     }
 }
 }

@@ -32,7 +32,9 @@ private:
     boost::asio::awaitable<void> upload(boost::beast::tcp_stream& stream,
         boost::beast::flat_buffer& buffer, boost::beast::http::request_parser<boost::beast::http::buffer_body>& parser,
         Ticket ticket, nlohmann::json media);
-    boost::asio::awaitable<void> download(boost::beast::tcp_stream& stream, Ticket ticket, nlohmann::json media);
+    // 鉴权后的完整/单区间 GET；response_started 避免发送正文后再次写错误响应。
+    boost::asio::awaitable<void> download(boost::beast::tcp_stream& stream, Ticket ticket,
+        nlohmann::json media, std::string range_header, bool& response_started);
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::steady_timer collection_timer_;
     boost::asio::thread_pool workers_{1};
