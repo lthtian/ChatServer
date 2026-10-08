@@ -44,6 +44,12 @@ class DiskStore {
   std::uint64_t Size(std::string_view key) const;
   bool Remove(std::string_view key) const;
   void CollectStaging() const;
+  // 将小型状态/清单完整落盘后原子替换；媒体原件仍使用 Begin 的不可覆盖提交。
+  void Replace(std::string_view key, std::span<const std::uint8_t> bytes) const;
+  // 供受控媒体处理子进程读取对象；仍校验对象键和符号链接。
+  std::filesystem::path Path(std::string_view key) const { return ObjectPath(key); }
+  // 删除指定媒体的派生目录，拒绝链接与非目录；调用者先确认任务不在运行。
+  void RemoveTree(std::string_view key) const;
 
  private:
   std::filesystem::path ObjectPath(std::string_view key) const;

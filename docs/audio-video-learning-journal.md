@@ -206,3 +206,58 @@ tianmu_sama 反馈传输完成后弹窗残留、视频卡片和输入区布局�
 2026-10-03 第七阶段 OpenInput 教学补充：用户指出参数 API 与 HTTP 接入原理讲解不足。按安装的 FFmpeg 8.1.1 头文件和实际代码补充 3.2 节：AVDictionary 字符串参数/二级指针/复制与释放、avformat_open_input 四个参数及 mov 容器选择、AVIOContext::pb 字节接口、客户端发请求与服务器回响应、av_read_frame 按需驱动 I/O、解码线程可能阻塞及中断。明确在线授权/缓冲/刷新仍在 OpenInput 之外。仅知识文档修改，保留无链接格式。
 
 2026-10-03 后续路线重排：tianmu_sama 授权调整 audio-video-learning-plan.md，要求贴近 C++ 流媒体实际工作并询问合并媒体处理/HLS。已将两者合成阶段 8，内部 8.1 转封装、8.2 转码、8.3 HLS 打包、8.4 任务与分片授权、8.5 Qt 选档和 ABR 对照；阶段 9 直播推流/接入/分发，阶段 10 RTP/RTCP，阶段 11 并发/故障/资源工程。部署改为贯穿性约束。后置客户端队列、渲染、完整无缝 ABR、低延迟与实时通信，仍不引入摄像头业务。路线查阅 FFmpeg HLS、SRS、ZLMediaKit、RTP/RTCP 与 H.264 RTP 官方资料；教学先直接调用 libav C++ 链路，业务通过受限工作程序隔离转码，初期在本机 WSL 处理，云端轻量分发。直播优先 SRS 基线加核心分发源码带读，不要求重写完整 RTMP。保留前七阶段正文，校正文件开头的已完成状态；本次仅调整计划，不启动阶段八代码或部署。
+
+2026-10-03 路线粒度纠正：tianmu_sama 明确要求第八阶段最多分两部分，并要求缩短响应时间。计划已收拢为 8.1 媒体处理（同一 C++ 工具完成转封装/两档转码）与 8.2 HLS 点播接入，不再以五个小节分别推进。首版只保留单任务处理、基本状态/资源边界与发布鉴权，完整任务领取调度和恢复留到阶段 11。后续只围绕当前问题做必要查阅和定点编辑，不重复研究已核实内容。
+
+2026-10-03 阶段 8.1：按 tianmu_sama 授权完成 lessons/media_process，同一 C++ 工具提供 MP4/MKV remux 与串行 480p/360p 转码（libx264 YUV420P、AAC 48 kHz stereo）。文件操作复用 Qt Core，媒体处理直接调用 FFmpeg；未引入 HLS/业务任务框架。头文件逐函数/成员注释，C++ UTF-8 BOM；知识文档 08-媒体处理与HLS点播.md 的 8.1 记录输出容器/轨道、编码 API、CRF/VBV/GOP、时间基、PCM FIFO 和排空，不放链接。原件和已有目标受保护，半成品 .part，正常异常尽力清理，硬退出不承诺回滚。普通 SDR/连续音轨为范围，复杂颜色、旋转及时间线修复不扩展。
+
+必要验证：MinGW 8.1 x64 Ninja Debug 最终 Full build passed，3.50 秒，2,063,347 字节、PE x64，构建及样本结果在 README，详细真实 API/命令验证在 build/verification.json。9 个输出全量解码及 2.1 秒 seek 后解码无错误；Sintel 1253 帧、无音轨样本 40 帧；MP4 moov 前置；按轨道核对转封装包 SHA256/PTS/DTS/duration 一致。44.1 kHz mono、延后约 0.5 秒的真实片段验证重采样/FIFO 短尾。错误路径验证仅已存在输出和缺失输入，原件摘要未变。没有人工听完整输出，不声称主观质量验收。
+
+排障经验：当前 MinGW 8.1 标准库 filesystem 的 Windows path 实现存在头文件编译错误，使用与第四阶段一致的 Qt Core 文件 API 后通过，不改装编译器。转封装验收不能要求跨轨道全局包顺序完全相同：同 DTS 的音/视频包允许重新交错，应该逐轨道核对顺序、时间和摘要。8.2 尚未开始，教学建议先从 remux.cpp 的 Remux 与 Output::WriteHeader/WritePacket/Finish 读起，再看 TrackTranscoder。继续遵守用户不做 TDD、仅必要验证和缩短响应时间的要求。
+
+2026-10-03 阶段 8.1 知识整理：按 tianmu_sama 要求将近期问答合并到 08-媒体处理与HLS点播.md 原有概念章节，补转封装用途、编码格式取舍、封面流/轨道元数据、WriteHeader/faststart/Range、串行多档与 ConfigureVideo/ConvertVideo/Encode 职责、分辨率和画质、变长编码包及音视频交错、逐级排空与持续写盘。明确更正：不能把解码依赖或延迟造成的多次送包后才输出，直接解释为同一编码帧拆在多个 AVPacket；区分媒体包、网络分片和编码帧组织。无问答流水、无链接，8.2 仍待实现；静态检查段落归属和代码围栏，不扩展测试或重新构建。
+
+2026-10-03 阶段 8.2 方案补充：tianmu_sama 要求服务端告知可用清晰度，前端按最高可用档位及以下显示，480p 视频不能出现 720p。已更新路线：候选 720p/480p/360p，按源分辨率选择、不向上放大；服务端返回实际已发布就绪的档位列表，最高可用值从列表得出，前端动态生成选项并与 HLS 主列表保持一致，不能只根据原件尺寸推测尚未生成的档位可播放。当前仍为 8.2 方案讨论。
+
+
+### 2026-10-03 阶段 8.2 执行
+用户确认开始 HLS 点播，特别要求用实际数据解释 HLS/TS/PES 与 HTTP/TCP 包结构；动态档位按已就绪列表，480p 不显示 720p。实施沿用本机媒体处理与 WSL 编译、云端分发；采用本机受控发布工具准备资源包，以独立目录目录清单记录派生状态，不把转码放进聊天请求线程。
+- [x] C++ HLS 打包及 TS/fMP4 产物、动态档位与包结构观察。
+- [x] 服务端派生清单、整套 HLS 鉴权读取与本机发布入口。
+- [x] Qt HLS 输入、动态档位切换与定位恢复。
+- [x] 本机构建、必要真实验证、云端部署及专业知识文档。
+
+完成记录：media_process hls 串行转码后调用 HLS muxer；Sintel TS 为 480/360、无声 fMP4 为 720/480/360。ConvertVideo 按媒体时间强制 IDR（forced-idr=1），多档关键帧 PTS 对齐。publish_hls.py 使用本机 Paramiko、源/产物 SHA256、排他发布锁、不可变 revision 目录及原子 catalog 指针；没有自动上传后任务调度，失败留下的目录/锁及旧版本人工处理，阶段 11 再扩展。read/playback 返回实际 variants，所有 HLS 资源逐次验证短期凭证、登录会话和聊天权限；原件下载继续 read/original。Qt Kind::Hls 选择 hls 解封装器、下拉框选媒体列表，OpenSource 后 seek 恢复位置/暂停意图，AuthorizationRequested 携带档位。
+
+必要验证：所有 TS/fMP4 档完整解码、关键帧/尺寸检查；真实隔离服务 test_hls_assets 62.337 秒通过；公网 Qt 实际首帧、2.3s 暂停 seek、切360p、提前触发客户端续签后保留档位通过。续签测试没有等待服务端五分钟到期，不夸大为后端过期实测。fMP4 seek 出现 3 次重复 MOOV 警告，核对 FFmpeg 8.1.1 hls_read_seek 重取 init 与 mov_read_moov 已读则跳过的路径，捕获日志并白名单核对，非损坏包；未屏蔽诊断。没有主观试听结论。
+
+构建与部署：三主目标 Full build passed，media_process Debug x64 7.48 秒（含配置）、Qt ChatClient Debug x64 9.13 秒、WSL ChatServer Release x86_64 96.26 秒。云端运行 /home/lth/chat_server/releases/20261003-210856-hls/ChatServer，备份同名目录，未迁移数据库；PID76495/NRestarts0/约23MiB为验证快照。已给12条匹配两份样本的媒体记录准备HLS，包括测试账号25/26的两条；准备既有样本无新聊天通知。细节、摘要及命令在 STAGE8_DELIVERY.md。测试执行更新了仓库原先跟踪的 tests/__pycache__/media_schema_test.cpython-312.pyc；未进行Git恢复，后续执行设置 PYTHONDONTWRITEBYTECODE。
+
+排障记忆：服务器使用自带 json.hpp，不能写系统 nlohmann/json.hpp；Qt toArray 必须包含 QJsonArray，单独测试需要 tcpclient.h 的完整定义。新测试插入原方法前时不要挪用它的 skipUnless 装饰器。Client UUID 使用标准带连字符形式，begin_file 对任意32位hex不认可；上传测试务必将文件正文传入 transfer。下次直接从08知识文档8.2及hls_package.cpp讲起，不重复构建部署或扩展阶段9。
+
+### 2026-10-06 分片基础补充
+用户需要单独深入解释 HLS、m3u8、TS、fMP4 的关系与存在原因，侧重实际字节和播放过程，知识文档不放外部链接。已新增《08-补充-分片与HLS基础.md》，结合现有产物的播放列表、TS PID/PES 字节、fMP4 box 和 tfdt 解释资源层、容器层、编码层。只读核对：Sintel 首片 94,376 字节等于 502 个 TS 包；无声 720p init 为 850 字节，第二片 tfdt=180000、timescale=90000。强调分片容器不是在线播放的普遍前提，初始化信息、随机访问条件与独立文件是不同概念。文档工作不构建或部署。
+
+### 2026-10-06 服务端媒体处理范围澄清
+用户明确：小内存服务器限制的是编译，未要求本地转码；期望客户端上传原件后由服务端后台自动转码、分片并登记档位。此前把本机手动打包发布当作阶段 8.2 完整链路，遗漏了自动处理环节，不能再将其描述为已完成该目标。后续实现应围绕服务端处理推进；编译继续在本机，转码运行资源单独实测，不能仅凭它是普通可执行程序保证资源足够。本轮用户询问做法是否符合实际业务，先解释，不擅自启动改造。
+
+### 2026-10-06 自动点播处理实施
+用户授权把上传后处理接到服务端并部署，参考实际点播工作流；Linux 修改不使用 cpp-utf8-bom 技能。
+- [x] 复用媒体处理工具，在本地 WSL 构建 Linux 运行程序。
+- [x] 原件提交与持久任务入队同一数据库事务；后台串行执行、失败记录/重试、重启恢复、完整产物原子发布。
+- [x] 必要的真实上传/分片/读取与故障验证，本地编译后部署公网服务器。
+- [x] 修改阶段 8.2 知识文档、分片补充与运行交接。
+运行架构：ChatServer 管理 MySQL 持久任务，独立子进程执行现有 C++ media_process HLS 处理；单机一个任务同时运行，三个档位逐档处理。公网机器 Ubuntu24.04 已有 FFmpeg6.1 和 Qt5Core 运行库，约722MiB可用（预检快照）；不在远端编译。不引入独立消息中间件，文档说明与大型分布式工作流的对应关系。
+
+验证进展：TS 三项真实服务验证通过（101.606秒）；最终版本 fMP4 同样三项通过（108.015秒），覆盖上传自动处理、失败保留原件与授权重试、处理中重启恢复。Linux最终ChatServer构建42.68秒（主机命令46.59秒），media_process5.67秒，Qt ChatClient Debug/x6420.37秒。期间Qt smoke编译发现GNU make拾取PATH中的sh.exe吞掉Windows反斜线，按仓库README限制PATH后通过8.92秒；不更改项目工具链。一次fMP4 fixture启动超时发生在本机构建并行期间，单独运行最终产物后通过，没有延长超时或改生产代码掩盖。用户已经授权本次部署；公网切换前备份和004任务表迁移进行中。
+
+完成记录：已部署 20261006-115359-media-jobs，备份同名目录，004任务表迁移已执行，数据库备份在独立临时库验证恢复。既有12份HLS复用，新上传两份由服务器实际处理：Sintel33.2秒生成480/360，原无声视频6.08秒生成720/480/360。最后14个任务均ready；active/running、PID87336、NRestarts0，cgroup峰值269946880字节（约257MiB，含子进程）。公网Qt首帧、档位、2.3秒暂停seek、切360p和真实重新授权通过；没有把客户端缩短期限实验说成后端五分钟过期验证。
+
+末次诊断：独立Qt测试目录未部署插件，首轮启动没有进入测试且退出1；显式设置QT_PLUGIN_PATH/QT_QPA_PLATFORM_PLUGIN_PATH后测试通过，无需改产品代码。测试日志逐行核对：两条通过结果、正常分片打开，以及一次窗口析构主动中断HTTP的Immediate exit requested；无其他诊断。测试口令fixture已删除，专用账号27/28及其测试消息保留，不触及真人会话。最终报告STAGE8_AUTOMATIC_VOD_DELIVERY.md记录构建命令、摘要、上线位置和运行限制。知识文档与分片补充保持自包含无链接，路线和README纠正本机转码要求。
+
+实现注意：原子rename成功后的目录fsync仍可能失败，不能因此删除已被catalog引用的产物；资源复制失败的清理只围绕catalog发布前。Qt头文件构造注释中的program参数不存在，最后仅改为从CHAT_MEDIA_PROCESS读取，静态核对而不重复编译。Git diff --check两仓库通过，提示的LF/CRLF是仓库换行策略，不进行无意义全文件改写。
+
+### 2026-10-08 HLS 切档片尾定位修复（仅源码）
+用户报告多次切档出现 av_seek_frame: Operation not permitted。查阅实际 FFmpeg 8.1.1 hls_read_seek/find_timestamp_in_playlist 与 seek_frame_internal，确认 HLS first_timestamp 取首包 DTS；定位失败经过 AVFMT_NOGENSEARCH 分支返回 -1，错误文字不能视为 HTTP 权限拒绝。修改前直接调用本机同版本 DLL 对既有 hls-silent/720p/index.m3u8 进行只读诊断：start_time=0.25秒、duration=5秒，播放器4.7秒成功，4.75/4.8/4.999/5秒均返回-1，复现截图错误。尚未得到用户对是否仅片尾触发的回答，不能声称排除全部快速切档竞态。
+
+用户明确允许先改，但虚拟机设置改变，禁止本轮编译/上线。仅修改Qt项目 media_decoder.h/.cpp 和 media_window.cpp：单档HLS借读保留首包，以其DTS设seek_origin_us_；origin_us_保留显示时间职责；首次Read消费预读包，ResetDecodeState清标志和引用；Opened按输入时长限制恢复位置后再建立音频锚点。非HLS沿用容器起点。新增成员有中文注释。约25行功能改动，静态核对调用、代次过滤、包所有权、成功seek清理与位置边界；diff --check通过，未编译、未运行修改后测试、未部署，现有EXE仍未包含修复。知识文档同步补充起点区别。后续用户授权编译时再验证TS/fMP4反复切档、4.75秒之后、播完切档、暂停与续签场景。

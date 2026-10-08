@@ -95,15 +95,17 @@ asio::awaitable<void> Reply(beast::tcp_stream& stream, http::status status, json
 
 MediaService::MediaService(asio::any_io_executor executor, std::string root, int port, std::string url)
     : acceptor_(executor, tcp::endpoint(asio::ip::make_address("127.0.0.1"), port)),
-      collection_timer_(executor), store_(root), url_(std::move(url)) {}
+      collection_timer_(executor), store_(root), jobs_(executor, root), url_(std::move(url)) {}
 
 void MediaService::start() {
+    jobs_.start();
     asio::co_spawn(acceptor_.get_executor(), accept(), asio::detached);
     asio::co_spawn(acceptor_.get_executor(), collect(), asio::detached);
 }
 
 void MediaService::stop() {
     stopping_ = true;
+    jobs_.stop();
     boost::system::error_code ignored;
     acceptor_.close(ignored);
     collection_timer_.cancel(ignored);
@@ -121,13 +123,14 @@ asio::awaitable<void> MediaService::collect() {
             for (const auto& record : records) {
                 const auto id = record["id"].get<std::string>();
                 const int owner = record["owner"];
-                if (active_.contains(id)) continue;
+                if (active_.contains(id) || jobs_.busy(id)) continue;
                 active_.insert(id);
                 Cleanup release{[this, id] { active_.erase(id); }};
                 const auto media = co_await repository.owned(owner, id);
                 if (media["state"] != "canceled" && media["expired"] == 0) continue;
                 co_await asio::co_spawn(workers_, Work<bool>([this, id] {
-                    store_.Remove(id + "/original"); store_.Remove(id + "/thumbnail"); return true;
+                    store_.Remove(id + "/original"); store_.Remove(id + "/thumbnail");
+                    store_.RemoveTree(id + "/hls"); store_.RemoveTree(id + "/processing"); return true;
                 }), asio::use_awaitable);
                 co_await repository.purged(owner, id);
             }
@@ -146,8 +149,9 @@ json MediaService::descriptor(Ticket ticket) {
     if (tickets_.size() >= 1024) throw MediaError("busy");
     const auto token = Random(32);
     const auto method = ticket.upload ? "PUT" : "GET";
+    const auto path = ticket.hls ? "/media/hls/" + ticket.hls->revision + "/master.m3u8" : "/media";
     tickets_.emplace(token, std::move(ticket));
-    return {{"method", method}, {"url", url_ + "/media"},
+    return {{"method", method}, {"url", url_ + path},
         {"headers", {{"Authorization", "Bearer " + token}}},
         {"expires_at", std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count() + 300000}};
@@ -158,6 +162,11 @@ asio::awaitable<json> MediaService::request(int actor, Session::Ptr session, jso
     if (!guard->valid()) throw MediaError("unavailable");
     MediaRepository repository(guard->connection());
     const auto op = input.at("op").get<std::string>();
+    if (op == "retry_hls") {
+        const auto id = input.at("media_id").get<std::string>();
+        co_await repository.retry_job(actor, id);
+        co_return co_await repository.job_status(id);
+    }
     if (op == "send_text") co_return co_await repository.send_text(actor,
         ParseConversation(input.at("conversation")), input.at("client_msg_id"), input.at("text"));
     if (op == "sync") co_return co_await repository.sync(actor,
@@ -171,8 +180,22 @@ asio::awaitable<json> MediaService::request(int actor, Session::Ptr session, jso
     if (op == "read") {
         const auto conversation = ParseConversation(input.at("conversation"));
         const auto variant = input.at("variant").get<std::string>();
-        if (variant != "original" && variant != "thumbnail") throw MediaError("invalid_argument");
+        if (variant != "original" && variant != "thumbnail" && variant != "playback") throw MediaError("invalid_argument");
         const auto media = co_await repository.access(actor, conversation, input.at("media_id"));
+        if (variant == "playback") {
+            const auto id = media["media_id"].get<std::string>();
+            const auto hash = media["sha256"].get<std::string>();
+            const auto hls = co_await asio::co_spawn(workers_, Work<std::shared_ptr<const HlsCatalog>>(
+                [this, id, hash] { return LoadHls(store_, id, hash); }), asio::use_awaitable);
+            auto state = hls ? std::string("ready") : co_await asio::co_spawn(workers_, Work<std::string>(
+                [this, id] { return HlsState(store_, id); }), asio::use_awaitable);
+            const auto job = co_await repository.job_status(id);
+            if (!hls && !job.empty()) state = job.at("state").get<std::string>();
+            co_return json{{"format", hls ? "hls" : "mp4"}, {"hls_state", state},
+                {"hls_failure", job.value("failure_code", json(nullptr))},
+                {"variants", hls ? hls->variants : json::array()},
+                {"download", descriptor({actor, session, conversation, id, "original", false, deadline, hls})}};
+        }
         if (media["kind"] == "file" && variant != "original") throw MediaError("invalid_argument");
         const bool original = variant == "original";
         co_return json{{"download", descriptor({actor, session, conversation, media["media_id"], variant, false, deadline})},
@@ -183,9 +206,10 @@ asio::awaitable<json> MediaService::request(int actor, Session::Ptr session, jso
     if (op == "cancel") {
         const auto id = input.at("media_id").get<std::string>();
         co_await repository.cancel(actor, id);
-        if (!active_.contains(id)) {
+        if (!active_.contains(id) && !jobs_.busy(id)) {
             co_await asio::co_spawn(workers_, Work<bool>([this, id] {
-                store_.Remove(id + "/original"); store_.Remove(id + "/thumbnail"); return true;
+                store_.Remove(id + "/original"); store_.Remove(id + "/thumbnail");
+                store_.RemoveTree(id + "/hls"); store_.RemoveTree(id + "/processing"); return true;
             }), asio::use_awaitable);
         }
         co_return json::object();
@@ -217,6 +241,7 @@ asio::awaitable<json> MediaService::request(int actor, Session::Ptr session, jso
     } else throw MediaError("invalid_argument");
     json result = {{"media_id", media["media_id"]}, {"state", media["state"]},
         {"failure_code", media["failure_code"]}, {"expired", media["expired"]}};
+    if (media["kind"] == "file") result["hls_job"] = co_await repository.job_status(media["media_id"]);
     if (media["state"] == "uploading" && media["expired"] == 0) {
         result["upload"] = descriptor({actor, session, {}, media["media_id"], "original", true, deadline});
     }
@@ -246,10 +271,17 @@ asio::awaitable<void> MediaService::serve(tcp::socket socket) {
         stream.expires_after(std::chrono::seconds(30));
         co_await http::async_read_header(stream, buffer, parser, asio::use_awaitable);
         const auto auth = std::string(parser.get()[http::field::authorization]);
-        if (parser.get().target() != "/media" || !auth.starts_with("Bearer ")) throw MediaError("unauthorized");
+        if (!auth.starts_with("Bearer ")) throw MediaError("unauthorized");
         const auto found = tickets_.find(auth.substr(7));
         if (found == tickets_.end() || found->second.deadline <= std::chrono::steady_clock::now()) throw MediaError("expired_ticket");
         const auto ticket = found->second;
+        const auto path = std::string(parser.get().target());
+        // 凭证只能访问所属版本清单中的对象；URL 不能变成任意磁盘路径。
+        if (ticket.hls) {
+            const auto prefix = "/media/hls/" + ticket.hls->revision + "/";
+            if (!path.starts_with(prefix) || !ticket.hls->assets.contains(path.substr(prefix.size())))
+                throw MediaError("unauthorized");
+        } else if (path != "/media") throw MediaError("unauthorized");
         const auto session = ticket.session.lock();
         if (!session || !session->connected() || ChatService::instance()->actor(session) != ticket.actor) throw MediaError("unauthorized");
         if (parser.get().method() != (ticket.upload ? http::verb::put : http::verb::get)) throw MediaError("invalid_argument");
@@ -274,7 +306,7 @@ asio::awaitable<void> MediaService::serve(tcp::socket socket) {
             // 没有实现表示验证器时，不满足 If-Range 条件，发送完整表示。
             const auto range = parser.get()[http::field::if_range].empty()
                 ? std::string(parser.get()[http::field::range]) : std::string();
-            co_await download(stream, ticket, media, range, response_started);
+            co_await download(stream, ticket, media, path, range, response_started);
         }
     } catch (const MediaError& failure) { error = failure.what(); }
       catch (const ImageError&) { error = "invalid_image"; }
@@ -361,9 +393,14 @@ asio::awaitable<void> MediaService::upload(beast::tcp_stream& stream, beast::fla
 }
 
 asio::awaitable<void> MediaService::download(beast::tcp_stream& stream, Ticket ticket, json media,
-    std::string range_header, bool& response_started) {
+    std::string path, std::string range_header, bool& response_started) {
     const bool original = ticket.variant == "original";
-    const auto total = media[original ? "actual_bytes" : "thumbnail_bytes"].get<std::uint64_t>();
+    HlsAsset asset;
+    if (ticket.hls) asset = ticket.hls->assets.at(path.substr(std::string("/media/hls/").size() + 33));
+    else asset = {media[original ? "original_key" : "thumbnail_key"].get<std::string>(),
+                  media[original ? "mime" : "thumbnail_mime"].get<std::string>(),
+                  media[original ? "actual_bytes" : "thumbnail_bytes"].get<std::uint64_t>()};
+    const auto total = asset.bytes;
     const auto range = ParseRange(range_header, total);
     http::response<http::empty_body> response(
         !range.satisfiable ? http::status::range_not_satisfiable :
@@ -379,7 +416,7 @@ asio::awaitable<void> MediaService::download(beast::tcp_stream& stream, Ticket t
         co_await http::async_write(stream, response, asio::use_awaitable);
         co_return;
     }
-    const auto key = media[original ? "original_key" : "thumbnail_key"].get<std::string>();
+    const auto key = asset.key;
     auto file = co_await asio::co_spawn(workers_, Work<std::shared_ptr<std::ifstream>>([this, key, range, total] {
         auto file = std::make_shared<std::ifstream>(store_.Open(key));
         file->seekg(0, std::ios::end);
@@ -388,8 +425,8 @@ asio::awaitable<void> MediaService::download(beast::tcp_stream& stream, Ticket t
         if (!*file) throw MediaError("io_error");
         return file;
     }), asio::use_awaitable);
-    response.set(http::field::content_type, media[original ? "mime" : "thumbnail_mime"].get<std::string>());
-    if (media["kind"] == "file") response.set(http::field::content_disposition, "attachment");
+    response.set(http::field::content_type, asset.mime);
+    if (!ticket.hls && media["kind"] == "file") response.set(http::field::content_disposition, "attachment");
     if (range.partial) {
         response.set(http::field::content_range, "bytes " + std::to_string(range.offset) + "-" +
             std::to_string(range.offset + range.length - 1) + "/" + std::to_string(total));

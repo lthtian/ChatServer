@@ -44,6 +44,16 @@ public:
     boost::asio::awaitable<void> ready(int actor, std::string media_id,
                                       Thumbnail thumbnail, std::uint64_t actual_bytes);
     boost::asio::awaitable<void> ready_file(int actor, std::string media_id, std::uint64_t actual_bytes);
+    // 单机处理器启动时恢复中断任务；连续三次中断后保留失败状态供人工重试。
+    boost::asio::awaitable<void> recover_jobs();
+    // 在事务中领取一条就绪原件的任务，并增加执行次数；空对象表示暂无任务。
+    boost::asio::awaitable<nlohmann::json> claim_job();
+    // 原件取消或清理后不允许将结果登记为 ready。
+    boost::asio::awaitable<void> finish_job(std::string media_id, std::string failure);
+    // 查询派生处理状态；空对象表示该文件未建立任务。
+    boost::asio::awaitable<nlohmann::json> job_status(std::string media_id);
+    // 仅文件所有者可以重试已失败任务，原件不需要重新上传。
+    boost::asio::awaitable<void> retry_job(int actor, std::string media_id);
     boost::asio::awaitable<void> fail(int actor, std::string media_id, std::string code);
     boost::asio::awaitable<void> cancel(int actor, std::string media_id);
     boost::asio::awaitable<void> retry(int actor, std::string media_id);

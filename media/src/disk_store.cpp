@@ -161,6 +161,31 @@ void DiskStore::CollectStaging() const {
   }
 }
 
+void DiskStore::Replace(std::string_view key, std::span<const std::uint8_t> bytes) const {
+  const auto destination = ObjectPath(key);
+  if (bytes.size() > 512 * 1024) throw std::length_error("Metadata exceeds limit");
+  const auto temporary = std::string(key) + "_" + std::to_string(std::random_device{}());
+  auto output = Begin(temporary, bytes.size(), 512 * 1024);
+  output->Append(bytes);
+  output->Commit();
+  try {
+    fs::rename(ObjectPath(temporary), destination);
+    SyncDirectory(destination.parent_path());
+  } catch (...) {
+    Remove(temporary);
+    throw;
+  }
+}
+
+void DiskStore::RemoveTree(std::string_view key) const {
+  const auto path = ObjectPath(key);
+  if (!fs::exists(path)) return;
+  if (!fs::is_directory(path)) throw std::invalid_argument("Object subtree is not a directory");
+  // remove_all 不跟随子级符号链接，ObjectPath 已拒绝目标及父路径中的链接。
+  fs::remove_all(path);
+  SyncDirectory(path.parent_path());
+}
+
 DiskUpload::DiskUpload(fs::path staging, fs::path destination,
                        std::uint64_t expected_bytes)
     : staging_(std::move(staging)), destination_(std::move(destination)),

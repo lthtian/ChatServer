@@ -2,6 +2,8 @@
 // ABOUTME: Bounds network concurrency and runs disk and codec work off the chat loop.
 #pragma once
 #include "media_repository.hpp"
+#include "hls_catalog.hpp"
+#include "media_jobs.hpp"
 #include "session.hpp"
 #include "chat/media/disk_store.h"
 #include <boost/beast.hpp>
@@ -24,6 +26,7 @@ private:
         std::string variant;
         bool upload;
         std::chrono::steady_clock::time_point deadline;
+        std::shared_ptr<const HlsCatalog> hls;  // 固定到已发布版本；所有子资源共享授权。
     };
     nlohmann::json descriptor(Ticket ticket);
     boost::asio::awaitable<void> accept();
@@ -34,11 +37,12 @@ private:
         Ticket ticket, nlohmann::json media);
     // 鉴权后的完整/单区间 GET；response_started 避免发送正文后再次写错误响应。
     boost::asio::awaitable<void> download(boost::beast::tcp_stream& stream, Ticket ticket,
-        nlohmann::json media, std::string range_header, bool& response_started);
+        nlohmann::json media, std::string path, std::string range_header, bool& response_started);
     boost::asio::ip::tcp::acceptor acceptor_;
     boost::asio::steady_timer collection_timer_;
     boost::asio::thread_pool workers_{1};
     DiskStore store_;
+    MediaJobs jobs_;  // 独立于 HTTP 磁盘读写的持久媒体处理队列。
     std::string url_;
     std::unordered_map<std::string, Ticket> tickets_;
     std::unordered_set<std::string> active_;

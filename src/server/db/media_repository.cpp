@@ -220,10 +220,60 @@ asio::awaitable<void> MediaRepository::ready(int actor, std::string media_id,
 }
 
 asio::awaitable<void> MediaRepository::ready_file(int actor, std::string media_id, std::uint64_t actual_bytes) {
+    co_await Transaction(connection_, [&, actor, actual_bytes]() -> asio::awaitable<json> {
     const auto result = co_await Execute(connection_,
         "UPDATE Media SET state='ready',actual_bytes=?,mime='application/octet-stream' "
         "WHERE owner_id=? AND media_id=? AND kind='file' AND state='processing' AND expected_bytes=? "
         "AND expires_at>CURRENT_TIMESTAMP(6)", actual_bytes, actor, media_id, actual_bytes);
+    if (result.affected_rows() != 1) throw MediaError("state_conflict");
+    // 这里想数据库投递HLS处理任务
+    co_await Execute(connection_, "INSERT INTO MediaJob(media_id) SELECT media_id FROM Media "
+        "WHERE media_id=? AND LOWER(RIGHT(name,4))='.mp4'", media_id);
+    co_return json::object();
+    });
+}
+
+asio::awaitable<void> MediaRepository::recover_jobs() {
+    co_await Execute(connection_, "UPDATE MediaJob SET state=IF(attempts<3,'queued','failed'),"
+        "failure_code=IF(attempts<3,NULL,'interrupted') WHERE state='processing'");
+}
+
+asio::awaitable<json> MediaRepository::claim_job() {
+    co_return co_await Transaction(connection_, [&]() -> asio::awaitable<json> {
+        co_await Execute(connection_, "UPDATE MediaJob j JOIN Media m ON m.media_id=j.media_id "
+            "SET j.state='canceled' WHERE j.state='queued' AND (m.state<>'ready' OR "
+            "(m.expires_at<=CURRENT_TIMESTAMP(6) AND NOT EXISTS(SELECT 1 FROM History h WHERE h.media_id=m.media_id)))");
+        const auto rows = co_await Execute(connection_, "SELECT j.media_id,m.sha256 FROM MediaJob j "
+            "JOIN Media m ON m.media_id=j.media_id WHERE j.state='queued' "
+            "ORDER BY j.created_at,j.media_id LIMIT 1 FOR UPDATE SKIP LOCKED");
+        if (rows.rows().empty()) co_return json::object();
+        const auto id = rows.rows()[0][0].as_string();
+        const std::string media_id(id.data(), id.size());
+        co_await Execute(connection_, "UPDATE MediaJob SET state='processing',attempts=attempts+1,"
+            "failure_code=NULL WHERE media_id=?", media_id);
+        co_return json{{"media_id", media_id}, {"sha256", Value(rows.rows()[0][1])}};
+    });
+}
+
+asio::awaitable<void> MediaRepository::finish_job(std::string media_id, std::string failure) {
+    co_await Execute(connection_, "UPDATE MediaJob j JOIN Media m ON m.media_id=j.media_id SET "
+        "j.state=IF(m.state='ready',?,'canceled'),j.failure_code=NULLIF(?,'') "
+        "WHERE j.media_id=? AND j.state='processing'", failure.empty() ? "ready" : "failed", failure, media_id);
+}
+
+asio::awaitable<json> MediaRepository::job_status(std::string media_id) {
+    const auto rows = co_await Execute(connection_,
+        "SELECT state,attempts,failure_code FROM MediaJob WHERE media_id=?", media_id);
+    if (rows.rows().empty()) co_return json::object();
+    co_return json{{"state", Value(rows.rows()[0][0])}, {"attempts", Value(rows.rows()[0][1])},
+        {"failure_code", Value(rows.rows()[0][2])}};
+}
+
+asio::awaitable<void> MediaRepository::retry_job(int actor, std::string media_id) {
+    const auto media = co_await owned(actor, media_id);
+    if (media["state"] != "ready") throw MediaError("state_conflict");
+    const auto result = co_await Execute(connection_, "UPDATE MediaJob SET state='queued',attempts=0,"
+        "failure_code=NULL WHERE media_id=? AND state='failed'", media_id);
     if (result.affected_rows() != 1) throw MediaError("state_conflict");
 }
 
@@ -242,6 +292,7 @@ asio::awaitable<void> MediaRepository::cancel(int actor, std::string media_id) {
             "SELECT id FROM History WHERE media_id=? FOR UPDATE", media_id);
         if (!sent.rows().empty()) throw MediaError("already_sent");
         co_await Execute(connection_, "UPDATE Media SET state='canceled' WHERE media_id=?", media_id);
+        co_await Execute(connection_, "UPDATE MediaJob SET state='canceled' WHERE media_id=?", media_id);
         co_return json::object();
     });
 }

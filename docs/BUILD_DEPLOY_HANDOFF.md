@@ -1,8 +1,8 @@
 # 本地构建与阿里云服务部署交接
 
-整理日期：2026-10-02。交给正在开发 Qt 客户端和配套服务端的会话使用。
+整理日期：2026-10-06。当前自动点播部署见第 13 节；第 11、12 节为此前发布记录。
 
-本文基于本机实际脚本和 2026-09-21 成功部署记录；本轮仅整理文档，没有连接服务器复核当前状态，也没有执行构建或部署。服务器当前配置、数据库结构及接手会话的新代码，以操作前实际读取结果为准。
+本文包含本机实际构建脚本、2026-09-21 程序部署记录及公网直连配置。接手时仍应读取服务器实际状态；连接入口与直连配置见第 9 节。
 
 ## 1. 先分清交付物
 
@@ -36,14 +36,14 @@
 | 持久媒体目录 | `/home/lth/chat-media`，此前属主 lth、权限 700 |
 | MySQL / Redis | 本机 `127.0.0.1:3306` / `127.0.0.1:6379` |
 | 业务数据库 / 应用数据库用户 | `chat` / `lth` |
-| 聊天 TCP | `0.0.0.0:6000` |
-| 媒体 HTTP | `127.0.0.1:6002`，没有直接开放公网 |
+| 聊天 TCP | 程序监听 `0.0.0.0:6000`；客户端使用 Nginx 公网入口 `39.105.18.142:7000` |
+| 媒体 HTTP | 程序监听 `127.0.0.1:6002`；Nginx 通过公网 80 的 `/media` 路径转发 |
 
 注意源码路径是 `D:\chat_server`，输出路径却是 `D:\chat\_server\Output`，两者不要混淆。
 
 此前 WSL 为 Ubuntu 24.04、GCC 13.3、Boost 1.83、OpenCV 4.6、MySQL 8.0.46。主目标使用 C++20，链接 OpenCV、Boost system、hiredis、pthread、OpenSSL；具体依赖以当前 CMakeLists 为准。WSL 配置为 8 GB 内存、4 核、2 GB swap，服务端编译并发为 2。
 
-SSH 和 sudo 通过交互式密码输入；本文件不保存密码。接手会话若没有凭据，应让用户在登录/提权提示中输入，不把密码写进脚本、参数或仓库。SSH/sudo 密码与数据库应用密码不是同一种凭据。
+SSH 和 sudo 通过交互式密码输入。tianmu_sama 已明确要求将账号和密码保存在本地交接记录中，供执行会话读取：`D:\chat_server\ChatServer\context_transfer_report.md` 的“本地交接凭据”一节。已有凭据无需重复索取，不把密码写进命令参数或运行日志。SSH/sudo 密码与数据库应用密码不是同一种凭据。
 
 ## 3. 构建前检查与实际构建
 
@@ -156,7 +156,7 @@ WantedBy=multi-user.target
 
 现有 main.cpp 含数据库连接默认值，文档不抄录其中密码；新服务端若取消默认值，需要先补充真实配置，可在服务器私有 EnvironmentFile 中设置并由 systemd 引用，不把占位密码投入生产。保持工作目录是因为程序可能依赖相对资源路径。
 
-`CHAT_MEDIA_PORT=6002` 是服务端监听端口；`CHAT_MEDIA_URL=http://127.0.0.1:16001` 是返回给客户端的访问地址。两者不同是因为 SSH 转发，不是配置错误。新 Qt 客户端若不用相同隧道，需要同时调整客户端连接策略与媒体 URL；不要只改聊天端口。
+`CHAT_MEDIA_PORT=6002` 是服务端内部监听端口，`CHAT_MEDIA_URL` 是对客户端公布的访问基地址，程序会追加 `/media`。上面单元展示的是原部署快照；直连配置通过 `/etc/systemd/system/chatserver.service.d/media-url.conf` 覆盖为 `http://39.105.18.142`，不要把 `/media` 再写进服务端基地址。客户端的同名环境变量用于 URL 白名单，需要包含完整 `/media` 路径。
 
 ## 6. 上传到独立发布目录
 
@@ -256,23 +256,63 @@ mysql -NBe 'SELECT COUNT(*) FROM chat.History; SELECT COUNT(*) FROM chat.Media'
 
 若只换二进制、数据库结构与旧程序兼容，可恢复本次备份的 service 文件，daemon-reload 后启动，回到旧版本目录。若数据库已经迁移且不兼容，不能只回退 EXE/ELF；需评估一致恢复数据库、媒体与配置，以及切换后新增数据，不能自动覆盖生产数据。
 
-## 9. 客户端连接：保留已验证的隧道方案
+## 9. 客户端连接：公网直连
 
-Windows 单独终端执行并保持运行：
+2026-10-03 已完成切换：云安全组放行 TCP 80，chatserver 重启后从 drop-in 读取公网媒体基地址。关闭本地 SSH 隧道并确认 16000/16001 无监听后，真实 Qt 客户端视频收发、下载校验、画面播放、暂停 seek、历史与文字消息验证通过；Nginx 对应 PUT/GET 返回 200。切换后 chatserver active/running、PID 74471、NRestarts 0，PID 仅为当时记录，后续检查以实际值为准。
 
-```powershell
-ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -L 127.0.0.1:16000:127.0.0.1:6000 -L 127.0.0.1:16001:127.0.0.1:6002 lth@39.105.18.142
-```
+用户已明确选择公网 IP + HTTP 作为当前学习联调方式，客户端不依赖 SSH 隧道。此模式下聊天和文件数据不做传输加密。
 
-- Qt 客户端聊天地址配置为 `127.0.0.1:16000`。
-- 媒体请求使用服务端返回的 `http://127.0.0.1:16001/media`，携带返回的授权头。
-- 16000/16001 在客户端电脑，6000/6002 在服务器；每个使用隧道的客户端电脑都要建立自己的转发。
-- 端口占用时先核对已有隧道，不重复启动。历史 PID/会话编号不能作为当前存活证据。
-- 此前 Electron 项目 `E:\chat_server_qt\ChatClient\chat_client_electron` 的 `npm run tunnel` 就是上述命令。Qt 不需要运行 npm，直接启动对应 Qt 可执行文件。
-- 该方案不要求开放公网 6002，不能把媒体端口简单改为公网监听来绕过隧道。
+- 聊天：`39.105.18.142:7000`，沿用 Nginx 的 TCP 转发入口。
+- 文件：`http://39.105.18.142/media`，Nginx 反向代理到 `127.0.0.1:6002`。
+- 云安全组必须允许入方向 TCP 7000 和 80；只有服务器本机 curl 成功不能证明公网可达。
+- Qt 直接打开客户端 EXE，Electron 直接运行 `npm run dev`。
+- 客户端可用 `CHAT_HOST`、`CHAT_PORT` 覆盖聊天入口；客户端 `CHAT_MEDIA_URL` 指定允许的完整公网 HTTP 文件 URL，默认 `http://39.105.18.142/media`。
+- 媒体服务继续校验登录会话、会话成员和短期 Bearer 凭证，不把媒体文件夹作为静态目录开放。
+
+对应本仓库配置：
+
+- `deploy/nginx-chat-media.conf` → `/etc/nginx/conf.d/chat-media.conf`。
+- `deploy/chatserver-media-url.conf` → `/etc/systemd/system/chatserver.service.d/media-url.conf`。
+
+Nginx 配置启用前执行 `nginx -t`，通过后 reload。systemd drop-in 调整后执行 daemon-reload，并重启 chatserver 让进程读取新的媒体基地址；现有聊天连接会断开，客户端需重新登录。此项改动不需要编译服务端，也不执行数据库迁移。
+
+本次配置备份目录：`/home/lth/chat_server/backups/direct-http-1790993472233`。该次新增的两份配置原本不存在；需要回退时先核对当前文件确属本次配置，将它们移入备份目录，验证 Nginx 后 reload，再 daemon-reload/restart chatserver。回退会恢复原服务单元中的回环转发地址，客户端连接配置也要对应调整。
 
 ## 10. 交接执行原则
 
 先读新服务端代码和服务器现状，再复用上述环境。构建目标、依赖、运行参数、数据库迁移、客户端协议必须对应同一版本。同步使用当前工作区源码，不执行 Git 写操作。不要重用历史发布目录或硬编码旧产物哈希。
 
 交付时报告：源码位置、构建命令/耗时/结果、产物哈希、发布和备份目录、迁移情况、实际监听端口、服务运行状态，以及 Qt 客户端如何连接。
+
+
+## 11. 第七阶段 Range 点播发布记录（2026-10-03）
+
+- 本机构建：`wsl -d ChatUbuntu -u lth --exec bash /mnt/f/linux/_environment/build-chat.sh server Release`，ChatServer / Release / Linux x86_64，Full build passed，94.60 秒。
+- 产物：`D:/chat/_server/Output/linux-x64/Release/ChatServer`，56,107,496 字节，SHA-256 `52b469e91a3d452294d5a307e5254269f74daf604ad1fdcc99f231eb684808c9`。
+- 运行版本：`/home/lth/chat_server/releases/20261003-135708-range/ChatServer`。
+- 发布前备份：`/home/lth/chat_server/backups/20261003-135708-range`，包含服务配置、drop-in、数据库和媒体文件；没有数据库迁移。
+- 部署后及真实联调后均为 active/running，PID 75156、NRestarts 0；后一次服务内存约 25 MiB。监听 6000、回环 6002，公网入口仍是 7000/80。以上 PID、内存仅为检查时的快照。
+- Nginx 实际 GET /media 返回 206，完整下载仍返回 200；私聊测试账号经过公网完成在线/下载播放、跳转、缓存复用及五分钟凭证刷新。没有在远端编译。
+- 对应 Qt 产物：`E:/chat_server_qt/ChatClient/build/Desktop_Qt_5_15_2_MinGW_64_bit-Debug/debug/ChatClient.exe`；详细验证见 `docs/STAGE7_DELIVERY.md`。
+
+## 12. 第八阶段 HLS 点播发布记录（2026-10-03）
+
+当次发布为 `/home/lth/chat_server/releases/20261003-210856-hls/ChatServer`，备份在 `/home/lth/chat_server/backups/20261003-210856-hls`。本机 WSL Release/x86_64 构建通过，96.26 秒；ELF 60,959,120 字节，SHA-256 `6c20fc642d344e090b17dac5064b7be292e855fa7ad023cfa890f0bd0dd5484a`。当次没有数据库迁移。
+
+Nginx `/etc/nginx/conf.d/chat-media.conf` 同时代理 `/media` 与 `/media/hls/...`，后端仍是回环 6002；没有公开存储目录。服务端用同一短期 HLS 凭证逐次校验 master、媒体列表、TS、init.mp4、m4s，原件下载凭证仍只读 `/media`。C++ 新增 `hls_catalog.cpp`；全新同步后若已有 CMake 缓存未重新收集源文件，需要对 `/opt/chat-build/source` 的既有构建目录运行一次配置。
+
+当次 HLS 产物在本机 `lessons/media_process` 生成，由 `publish_hls.py` 校验原件后上传到 `objects/<media_id>/hls/<revision>`，最后原子替换 `catalog`。自动上传后处理已接入第 13 节的部署；云端运行转码，本机负责 Linux 编译。所有列表和子资源继续鉴权。
+
+公网 Qt 的 TS/fMP4 起播、暂停定位、动态档位、切档、客户端续签保留档位通过。验证后服务 active/running、PID76495、NRestarts0、约23MiB（快照）。既有两份样本的12条媒体记录已准备HLS，Sintel只有480p/360p，原无声样本为720p/480p/360p。Qt产物路径不变，构建和验证细节在 `docs/STAGE8_DELIVERY.md`。
+
+## 13. 上传后自动处理部署（2026-10-06）
+
+当前服务目录：`/home/lth/chat_server/releases/20261006-115359-media-jobs`；备份同名目录位于 `/home/lth/chat_server/backups`。部署前备份数据库、媒体与服务配置，并在独立临时库核对数据库恢复。已应用 `migrations/004_media_jobs.sql`，创建 MediaJob 并为可用既有 MP4 补任务。
+
+上传 MP4 原件就绪时在同一事务入队，服务后台启动 Linux `media_process` 转码和分片。配置位于 `/etc/systemd/system/chatserver.service.d/media-processing.conf`：ExecStart 指向该发布目录的 ChatServer，`CHAT_MEDIA_PROCESS` 指向同目录 media_process，`CHAT_HLS_SEGMENT_TYPE=ts`。同机单个任务、各档串行，云端只运行不编译。
+
+两个 Linux 目标可用本机 WSL 的 `deploy/build-media-server.sh` 编译，产物在 `D:/chat/_server/Output/linux-x64/Release`。`deploy/install-media-server.sh` 执行已审查的首次任务表迁移与发布，不适合不加核对地重复运行。后续部署先检查表、drop-in 和实际运行路径，不能仅改主 service 而忽略 ExecStart 被 drop-in 覆盖。
+
+两份真实公网新上传视频已自动生成 HLS，Qt 实际首帧、暂停定位、切档、续签通过；处理中可播放原件，完成后重新打开取得清晰度。运行快照 active/running、PID87336、NRestarts0，服务及子进程内存峰值约257MiB。入口仍为7000/80，后端6000/回环6002。
+
+完整构建命令、产物摘要、验证证据和回退边界见 `docs/STAGE8_AUTOMATIC_VOD_DELIVERY.md`。回退前恢复并核对 service 和 drop-in；新增任务表不自动删除，更不能覆盖上线后业务数据。

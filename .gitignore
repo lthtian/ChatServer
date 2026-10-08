@@ -55,3 +55,22 @@ _tests/
 *.tmp
 *.bak
 *.cache
+
+# Local documentation and deployment files
+/docs/
+/deploy/
+/context_transfer_report.md
+
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Debug symbols and local IDE settings
+*.pdb
+*.ilk
+*.pro.user*

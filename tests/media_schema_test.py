@@ -78,6 +78,8 @@ class MediaSchemaTest(unittest.TestCase):
                 cls.database)
         execute((BASE / 'migrations' / '003_chat_files.sql').read_text(encoding='utf-8'),
                 cls.database)
+        execute((BASE / 'migrations' / '004_media_jobs.sql').read_text(encoding='utf-8'),
+                cls.database)
         if ARGS.repository_test:
             cls.test_user = 'chat_test_' + secrets.token_hex(6)
             cls.test_password = secrets.token_hex(24)
