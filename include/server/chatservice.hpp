@@ -24,6 +24,7 @@ using json = nlohmann::json;
 
 namespace asio = boost::asio;
 namespace chat::media { class MediaService; }
+namespace chat::media { class LiveService; }
 
 // Timestamp类型替代muduo::Timestamp
 using Timestamp = std::chrono::steady_clock::time_point;
@@ -50,6 +51,8 @@ public:
     // 异步初始化 Redis 连接（在 init_pool 协程中调用，确保服务器启动前完成）
     asio::awaitable<bool> init_redis();
     void setMediaService(chat::media::MediaService* service) { media_service_ = service; }
+    void setLiveService(chat::media::LiveService* service) { live_service_ = service; } // 借用 main 管理的直播模块。
+    asio::awaitable<void> notifyLive(json live); // 向会话参与者发送直播状态，不创建重复聊天记录。
     int actor(const Session::Ptr& session) const;
     asio::awaitable<void> mediaRequest(const Session::Ptr& session, json request);
 
@@ -120,4 +123,5 @@ private:
     // redis对象
     Redis _redis;
     chat::media::MediaService* media_service_ = nullptr;
+    chat::media::LiveService* live_service_ = nullptr; // 借用直播业务模块，不传输媒体字节。
 };

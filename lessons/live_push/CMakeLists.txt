@@ -1,0 +1,40 @@
+cmake_minimum_required(VERSION 3.20)
+project(live_push LANGUAGES CXX)
+
+set(FFMPEG_ROOT "" CACHE PATH "FFmpeg development package containing include, lib and bin")
+add_executable(live_push main.cpp)
+target_compile_features(live_push PRIVATE cxx_std_17)
+set_target_properties(live_push PROPERTIES CXX_EXTENSIONS OFF)
+if(WIN32)
+  target_compile_definitions(live_push PRIVATE WINVER=0x0A00 _WIN32_WINNT=0x0A00)
+  find_path(FFMPEG_INCLUDE_DIR libavformat/avformat.h
+    PATHS "${FFMPEG_ROOT}/include" NO_DEFAULT_PATH REQUIRED)
+  target_include_directories(live_push SYSTEM PRIVATE "${FFMPEG_INCLUDE_DIR}")
+  foreach(component avformat avcodec avutil)
+    find_library(FFMPEG_${component}_LIBRARY NAMES ${component}
+      PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH REQUIRED)
+    target_link_libraries(live_push PRIVATE "${FFMPEG_${component}_LIBRARY}")
+  endforeach()
+  file(GLOB ffmpeg_runtime "${FFMPEG_ROOT}/bin/*.dll")
+  add_custom_command(TARGET live_push POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${ffmpeg_runtime}
+      "$<TARGET_FILE_DIR:live_push>" COMMAND_EXPAND_LISTS VERBATIM)
+else()
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil)
+  target_link_libraries(live_push PRIVATE PkgConfig::FFMPEG)
+endif()
+if(MSVC)
+  target_compile_options(live_push PRIVATE /W4 /utf-8)
+else()
+  target_compile_options(live_push PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+if(MINGW)
+  target_link_options(live_push PRIVATE -municode)
+  get_filename_component(compiler_directory "${CMAKE_CXX_COMPILER}" DIRECTORY)
+  foreach(runtime libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
+    add_custom_command(TARGET live_push POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${compiler_directory}/${runtime}"
+        "$<TARGET_FILE_DIR:live_push>" VERBATIM)
+  endforeach()
+endif()

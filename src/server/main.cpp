@@ -2,6 +2,7 @@
 #include "chatservice.hpp"
 #include "async_connectionpool.hpp"
 #include "media_service.hpp"
+#include "live_service.hpp"
 #include <boost/asio.hpp>
 #include <iostream>
 #include <cstdlib>
@@ -27,7 +28,8 @@ void resetHandler(int)
 // 统一初始化 + 启动服务器（在同一个协程中完成）
 // 解决：Redis 连接后 stream_descriptor 上有 pending async_wait，
 // 导致第一阶段 ioc.run() 无法返回，服务器无法启动的问题
-asio::awaitable<void> bootstrap(ChatServer &server, chat::media::MediaService& media, const string &ip, int port)
+asio::awaitable<void> bootstrap(ChatServer &server, chat::media::MediaService& media,
+    chat::media::LiveService& live, const string &ip, int port)
 {
     // 初始化数据库连接池
     DBConfig dbConfig;
@@ -58,6 +60,10 @@ asio::awaitable<void> bootstrap(ChatServer &server, chat::media::MediaService& m
 
     // 启动服务器（在同一个 ioc.run() 中运行）
     ChatService::instance()->setMediaService(&media);
+    ChatService::instance()->setLiveService(&live);
+    live.start([](json state) -> asio::awaitable<void> {
+        co_await ChatService::instance()->notifyLive(std::move(state));
+    });
     media.start();
     server.start();
     cout << "[SERVER] ChatServer started on " << ip << ":" << port << endl;
@@ -88,8 +94,9 @@ int main(int argc, char *argv[])
         media_url ? media_url : "http://127.0.0.1:" + std::to_string(file_port));
 
     // 初始化 + 启动 合并在同一个协程中，单次 ioc.run() 运行所有内容
+    chat::media::LiveService live(ioc.get_executor());
     bool startup_failed = false;
-    asio::co_spawn(ioc, bootstrap(server, media, argv[1], std::atoi(argv[2])),
+    asio::co_spawn(ioc, bootstrap(server, media, live, argv[1], std::atoi(argv[2])),
         [&](std::exception_ptr error) {
             if (error) {
                 startup_failed = true;
@@ -101,6 +108,7 @@ int main(int argc, char *argv[])
     ioc.run();
     server.stop();
     media.stop();
+    live.stop();
     ChatService::instance()->stop();
 
     // 服务器停止后，重置所有用户状态为 offline

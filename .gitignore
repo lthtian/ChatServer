@@ -56,10 +56,22 @@ _tests/
 *.bak
 *.cache
 
-# Local documentation and deployment files
+# Local documentation and handoff files
 /docs/
-/deploy/
 /context_transfer_report.md
+
+# Deployment configuration and scripts
+/deploy/*
+!/deploy/build-media-server.sh
+!/deploy/build-srs.sh
+!/deploy/install-media-server.sh
+!/deploy/install-live-server.sh
+!/deploy/chatserver-live.conf
+!/deploy/chatserver-media-url.conf
+!/deploy/nginx-chat-live.conf
+!/deploy/nginx-chat-media.conf
+!/deploy/srs-chat.conf.in
+!/deploy/srs-chat.service
 
 # Python bytecode and tool caches
 __pycache__/

@@ -261,3 +261,79 @@ tianmu_sama 反馈传输完成后弹窗残留、视频卡片和输入区布局�
 用户报告多次切档出现 av_seek_frame: Operation not permitted。查阅实际 FFmpeg 8.1.1 hls_read_seek/find_timestamp_in_playlist 与 seek_frame_internal，确认 HLS first_timestamp 取首包 DTS；定位失败经过 AVFMT_NOGENSEARCH 分支返回 -1，错误文字不能视为 HTTP 权限拒绝。修改前直接调用本机同版本 DLL 对既有 hls-silent/720p/index.m3u8 进行只读诊断：start_time=0.25秒、duration=5秒，播放器4.7秒成功，4.75/4.8/4.999/5秒均返回-1，复现截图错误。尚未得到用户对是否仅片尾触发的回答，不能声称排除全部快速切档竞态。
 
 用户明确允许先改，但虚拟机设置改变，禁止本轮编译/上线。仅修改Qt项目 media_decoder.h/.cpp 和 media_window.cpp：单档HLS借读保留首包，以其DTS设seek_origin_us_；origin_us_保留显示时间职责；首次Read消费预读包，ResetDecodeState清标志和引用；Opened按输入时长限制恢复位置后再建立音频锚点。非HLS沿用容器起点。新增成员有中文注释。约25行功能改动，静态核对调用、代次过滤、包所有权、成功seek清理与位置边界；diff --check通过，未编译、未运行修改后测试、未部署，现有EXE仍未包含修复。知识文档同步补充起点区别。后续用户授权编译时再验证TS/fMP4反复切档、4.75秒之后、播完切档、暂停与续签场景。
+
+### 2026-10-08 阶段 9.1：Windows 文件模拟直播起步
+
+tianmu_sama 确认以知识学习为主、代码结构简单，Linux 虚拟机需重启但当前禁止使用；授权开始 Windows 示例和必要验证。9.2 后续计划聊天中创建直播、OBS 桌面作为源，当前不实施。Git 仍全部只读；用户要求整个 docs、deploy 不上传，忽略规则已添加，已有跟踪项需用户自行取消跟踪。
+
+新增 lessons/live_push：一个 main.cpp、CMakeLists.txt、README。无 Qt 依赖，本地 H.264/AAC MP4 单次推 RTMP，DTS 与单调时钟控制节奏，流索引映射、参数复制、FLV muxer、负时间戳处理、十秒 I/O 取消、RAII；不做自动循环、重连或采集。Windows 新源文件 UTF-8 BOM，不添加版权/ABOUTME。知识文档 09-直播推拉流与分发.md 先建立关系、FLV/RTMP 结构、发送时间、API、GOP 缓存与两种分发概念；不是问答流水账。
+
+Windows Debug/x64 最终 Full build passed，6.15 秒，466542 字节、PE 0x8664；命令和证据在 README。首轮8.73秒因WINVER默认值隐藏WC_ERR_INVALID_CHARS失败，同时NOMINMAX重定义；查工具链头文件定位，确认无遗留构建进程，设置Windows版本并条件定义宏后编译无警告。未使用/启动WSL，未接入公网，未编译聊天客户端或既有HLS修复。
+
+真实回环RTMP互通：用FFmpeg监听端接收，6秒Sintel片段146视频包+282音频包与输入一致；原始5秒无声样本40视频包一致，两份完整解码无警告。音频样本媒体6秒对应发送elapsed约6.00011秒，进程总9.945秒含连接/探测开销；无声进程4.970秒。不存在输入路径的失败信息核对。FFmpeg监听端在发布关闭后各一条Error during demuxing: I/O error已明确匹配验证，退出0，不能将其他I/O错误当正常。测试无mock，临时文件位于被忽略build目录。
+
+边界：FFmpeg监听模式只验证一条RTMP接入，不是SRS或多观看端服务器。SRS接入、HTTP-FLV/HLS分发、GOP中途加入、主观音画、重连、超时/Ctrl+C专门实验、Qt直播模式均未宣称完成。Linux恢复后继续；当前交付为9.1第一步，不把整阶段验收标为通过。
+
+### 2026-10-14 编码初始化知识补充
+
+tianmu_sama 指出 sequence header、NAL、SPS/PPS、AudioSpecificConfig 的名称在文档中引入过快，尚未建立“编码配置与实际媒体数据”的关系。初次补在第九阶段的位置不符合其要求，随后调整：H.264基础（NAL、参数集、切片、AVC配置记录、extradata）放第二阶段，AAC基础（AudioSpecificConfig、编码声音与PCM、ADTS/raw）放第四阶段；第九阶段只保留FLV承载、时间偏移、直播起播与推流API。学习文档保持自包含无链接；基础知识补回首次需要它的阶段，不集中堆到当前阶段。
+
+### 2026-10-14 第九阶段讨论整理
+
+按 tianmu_sama 要求将本轮有效理解按主题并入第九阶段：业务服务与媒体服务/转码进程分工、多清晰度与存储、配置缓存由服务端显式维护、新观众补发、应用按DTS定速、输出上下文与RTMP发布连接、FLV tag/RTMP消息/chunk/HTTP-FLV转换及HTTP版本边界。已核对FFmpeg8.1.1与SRS开发分支实际代码，但未使用Linux或补做运行。用户希望讲解着重端到端数据变化和设计目的，不对其简化表述反复作机械纠正；必须指出会影响理解的差异，如封装API非网络专用、RTMP线上不是完整FLV字节流。
+
+### 2026-10-15 阶段 9.2 准备
+
+tianmu_sama 要求先说明具体实施方案，尚未要求实施；明确回答 Linux 已恢复，可以检查构建和运行环境，撤销此前禁止使用虚拟机的限制。只读启动检查通过：ChatUbuntu、x86_64、CMake3.28.3、GCC13.3.0，既有 server-Release CMakeCache 与依赖目录存在，内存7.8GiB、可用约6.9GiB、swap2GiB。PATH 未发现 docker/srs；没有编译或部署。
+
+准备方案：先补齐SRS的真实接入与HTTP-FLV/HLS分发，再接ChatServer直播业务与Qt观看。文件推流先验证，随后OBS桌面/麦克风；单清晰度。候选设计为独立LiveService处理创建/观看/结束、鉴权及SRS回调，媒体由SRS分发；Qt增加直播输入语义、禁用点播seek、暂停后恢复到当前直播、断线有限重试。现有Kind::Http强制mov并检查Range，续签和恢复按点播位置seek，不能只加.flv URL。最终接口/存储细节随正式实施核对，不把提案当已实现。
+
+### 2026-10-15 阶段9.2实现与部署
+
+tianmu_sama授权按方案完成代码、中文注释、服务端/客户端分开文档，本机构建后部署。新建LiveSession与History.live_id，LiveRepository处理幂等创建/权限/状态，LiveService处理登录会话绑定票据、SRS发布断流回调、Nginx逐资源授权、状态核对和终止发布。复用既有SQL操作为database_query.hpp，不改变查询/事务逻辑。ChatServer负责业务与卡片，独立SRS接入/缓存/分发，Qt增加LiveFlv/LiveHls，暂停关闭输入、恢复重新加入、五次退避重连、结束停止，不seek。
+
+本机构建ChatServer最终112.05秒、Qt Debug/x64最终10.95秒均Full build passed；SRS固定v6.0-r0实际6.0.184本机编译成功；缺unzip/automake分类后补本机构建工具，无远端编译。Linux live_push另构建3.49秒供云端内部诊断。详细命令、产物摘要、版本和警告在STAGE9_LIVE_DELIVERY.md。
+
+真实隔离MySQL/Redis/ChatServer/SRS/Nginx/FFmpeg测试通过，覆盖幂等/历史/权限、两种格式双观众、分片授权、重推、迟到断流、主动结束和票据拒绝。Qt真实授权/解码通过暂停重入、推流断开后恢复、结束、零seek。不是mock，不宣称主观听感或服务端真实五分钟到期等待已验。
+
+根因记录：SRS默认相对objs的PID路径不适合独立发布目录；hls_ctx默认生成带查询参数的中间列表，按实际源码关闭并保留严格授权；三秒队列小于样本GOP，shrink清媒体包只留配置，导致POC错误，增为30秒；公网后续TS缺PPS实际是2×2.1秒强制封段截断9.33秒GOP，设置hls_aof_ratio10后，后续TS独立完整解码与Qt日志均干净。不能只凭显示几帧忽略错误日志，也不能把小队列数字直接当低延迟策略。
+
+已发布20261015-153232-live，备份同名目录，005迁移及临时库恢复验证通过。SRS独立service，API/HTTP/回调都loopback；Nginx80负责观看鉴权。ChatServer PID130209、SRS最终PID130687、NRestarts0为检查快照。云端无ffmpeg CLI，已有FFmpeg6运行库，故上传本机编译的已有C++live_push作内部源。公网Qt私聊观看/结束已过，专用账号29/30/31、测试直播均结束，口令fixture删除。1935公网连接超时，主机ufw inactive、nft空，已异步请用户放行云安全组；Windows向云端推流尚待此项。OBS采集、主观延迟及并发仍未验。
+
+知识文档09.2分别画服务端控制/媒体数据与客户端授权/解码/生命周期，补充GOP与强制封段阈值。路线、Qt README、9.1边界与部署交接同步。所有Git操作只读；docs/deploy按用户既定忽略规则保留本地。
+
+最终补验：聊天窗口历史卡片验证发现未读数响应排序takeItem当前联系人，使选择临时失效、历史代次递增。handleNewMsgAck排序用QSignalBlocker保留当前项，最小修复后真实“初始化→历史卡片→观看按钮→播放器”通过并检查截图。Qt最终构建7.73秒、21,177,416字节，SHA256 d3a328d189b1e69b67cfe87b95abdc82414342562bf82319f07309a7d303f69f。点播两个媒体的暂停seek/切360/续签回归通过，测试程序构建10.16秒。
+
+tianmu_sama随后确认已放行TCP1935，公网连接成功。Windows9.1既有C++程序实际推到云端，Qt FLV/HLS与卡片观看完整通过；另新建直播不预热HTTP重测通过，正常日志已核对。初次外网推流测试HTTP读取超时，Nginx499/0响应字节，主服务无重启；直接HTTP、带Range、FFmpeg8输入验证成功，未改超时或代码，后续两轮完整Qt通过，暂未稳定复现，不能声称根因已定位。交付文档保留此诊断。最终服务健康、测试场次均主动结束，OBS实采和主观延迟尚未验证。
+
+### 2026-10-16 Qt 内部桌面直播
+
+tianmu_sama不接受必须复制地址、外部运行OBS/9.1程序的桌面直播体验，授权将采集/编码/推流直接集成。确认选显示器、默认主屏，电脑声音和麦克风分别开关，720p/30fps单清晰度。麦克风默认关闭，用户可明确开启。用户关闭了两份运行中客户端后再构建，未擅自结束程序。
+
+新增客户端broadcast四个职责模块：DesktopBroadcast在GUI预览/抓屏和交接最新RGB图；DesktopPublisher工作线程管理本场生命周期、QPC公共时间线和有界发送；AudioCapture用WASAPI默认render-loopback/capture采音与swr转48k双声道float；StreamEncoder用libx264/AAC编码和FLV/RTMP输出。GOP60、无B帧、1.8Mbps目标/2.1Mbps最大VBV、AAC128kbps。只保留最新桌面图，音频按QPC区间混合，等待60ms采集但不平移PTS，过度积压显式失败，不自动降码率或重连。9.1程序保留独立，无运行依赖。
+
+live_chat改为内部控制窗口，创建/重推凭证自动交付，原卡片可重推；关闭窗口先停止采集、live_end后关闭，关闭聊天等待结束确认，聊天异常断开立即停止设备。创建请求ID保留供超时重试，结束后重新创建用新ID。现有服务端live_create/publish/read/end、回调和分发足够，本轮无协议/DB/服务器二进制变更或部署。
+
+初次公网测试FLV/HLS各10帧通过，声音测试因Windows只有DELI-MIC、无render端点而失败。已查PnP定位，未将失败算成功，清理专用账号的中断场次。用户连接耳机后，完整31.24秒通过：实际桌面→云SRS→Qt两协议，网络接收音频RMS0.0387958，系统声音开关关后RMS0，麦克风打开/Poll/关闭没有设备错误，结束→再次新建→关窗服务端结束通过。没有测试主观人声、长期漂移、多屏实机或固定低延迟。
+
+ChatClient Debug/MinGW x64最终Full build passed，12.45秒，25,532,330字节，2026-10-16 14:56:23，SHA256 a7995d5d32bda7ca46a2a73a520544d2a468d782819bf5612b224eabbd26a9e2。测试Release最终构建12.61秒通过。新增模块无编译警告；正常联调日志无未处理错误。实际看过控制窗口截图。完整命令、产物和验证边界在DESKTOP_LIVE_DELIVERY.md。9.2知识文档分别补充服务端、客户端发布、客户端观看链路及采音/编码API；路线与Qt README同步。Git保持只读。
+
+### 2026-10-16 桌面直播持续观看失败调查
+
+tianmu_sama实际用两个客户端观看，反复起播后重连。只读云端发现服务NRestarts=0，SRS无重启；Nginx约两秒一份200 FLV响应，SRS记录观看端断开，不能误判服务端挂了。此前首批10帧验证不够，未覆盖持续预读。
+
+新增独立进程live_stability_smoke诊断入口，发布与观看各一进程，真实Qt桌面→RTMP→云SRS→HTTP-FLV。未改产品代码前，2.917秒、14个显示帧，准确复现ErrorText“声画交错间隔过大，画面缓存达到本例上限”。根因是RequestData的音频一秒预读会读入约79MiB的720p RGB图，超过64MiB硬限制；单独need_video的32MiB检查无法约束need_audio。
+
+修复写入BufferAheadUs，用每张图实际大小及持续时间计算32MiB预算，预留两帧，音视频预读与起播共用预算，保留硬上限；重连状态显示错误原因。没有调整HTTP超时、SRS队列或扩大内存。随后检测两个用户ChatClient均已退出，未执行终止程序操作；更新EXE并进行两种协议各连续一分钟验证。
+
+诊断程序首轮并行编译11.14秒因Windows提交内存不足（cc1plus out of memory，系统仅约596MiB可提交）失败。确认无遗留编译进程后，去除诊断目标未使用的MainWindow依赖并串行编译，55.66秒Full build passed。没有结束用户程序或修改页面文件。失败日志保留，不能将首轮算通过。
+
+后续HLS长测仍失败，严格停止加补丁并重新调查。单独试验live_start_index=-3未解决，已撤销；没有盲目改HTTP超时或SRS。加入临时时间戳诊断后，精确看到FFmpeg跳过过期TS后音频actual=41.237s、累计expected=39.232s，差2.005秒，而视频41.221～42.021s、25帧撑破64MiB，audio_end40.064s、position39.760s。根因是ConvertAudio只认第一帧PTS，后续缺段被累计采样数拼掉。已按实际PTS与累计采样+SWR延迟比较，超过100ms排空/重置重采样并重建音频起点，输出层按PTS补静音/裁重叠。临时详细诊断移除，保留简洁错误原因展示。
+
+tianmu_sama补充关闭桌面直播控制窗口很久才消失。使用真实聊天TCP纯字节中转延迟结束回执2秒，原版100ms后仍可见、cleanup2.113s；确认界面可见性绑定服务端回执及同步wait。改为立即隐藏、原子Stop，SetEnded不join，FinishClose等业务确认和线程finished再关闭/销毁；错误重新显示窗口允许重试。End在live_id空且线程未退时只等待完成，避免递归close。析构保留最终join保护，正常关闭不阻塞GUI。修复后延迟回执同条件100ms不可见，后台2.103s完成，正常结束149ms。没有mock协议、伪造回执或强杀线程。
+
+最终ChatClient Debug/MinGW x64 Full build passed 31.32s，25,541,787字节，2026-10-16 17:02:49，PE0x8664，SHA256 59a4f7560f22bb197152a6ecc6ee74884b1e44e42c025940fdcae2f822214b59。诊断Release最终17.62s通过，两份最终构建无警告/错误。两独立进程最终FLV60.001s/1676帧/Playing57.879s，HLS60.003s/1540帧/Playing53.146s，各一次授权、无重连，结束均Playing且最近帧11/12ms前；包括初始探测和正常缓冲，不宣称零卡顿或长期压力通过。实际无解码错误/分片过期警告；此前主动取消后的单条HLS Failed to reload已单独核对。专用场次结束，口令fixture删除，服务端不需调整或部署。详细命令与证据更新DESKTOP_LIVE_DELIVERY.md，知识补回9.2音视频联合预算、缺段PTS、异步窗口生命周期。
+
+### 2026-10-16 部署文件的版本控制范围
+
+tianmu_sama明确项目必需的部署文件应随源码保存。deploy采用逐文件放行：SRS/Nginx/systemd配置、服务端与SRS本机构建脚本、媒体处理与直播安装脚本，共10个文件；docs继续忽略，live-remote.py依赖本机ignored远程凭证工具、build-live-push.sh仅为独立样例诊断，保留本地。只编辑.gitignore，不暂存、提交或推送。配置仍含当前公网IP、Linux用户与目录，构建脚本仍依赖现有WSL工作区，不宣称通用部署器。注意install-live-server.sh接收的nginx-chat-media.conf原由live-remote.py基于远端配置加入chat-live.conf的include后打包；直接复制仓库基础Nginx文件不等价于完整直播部署，未来整理部署入口时应显式处理此依赖。

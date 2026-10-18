@@ -1,4 +1,5 @@
-﻿#include "media_repository.hpp"
+#include "media_repository.hpp"
+#include "database_query.hpp"
 #include <algorithm>
 #include <functional>
 #include <string_view>
@@ -10,63 +11,9 @@ namespace mysql = boost::mysql;
 using json = nlohmann::json;
 
 namespace {
-using Connection = mysql::tcp_connection;
-
-void Disconnect(Connection& connection) {
-    boost::system::error_code ignored;
-    connection.stream().close(ignored);
-}
-
-asio::awaitable<mysql::results> Query(Connection& connection, std::string sql,
-                                     std::vector<mysql::field> parameters) {
-    auto statement = co_await connection.async_prepare_statement(sql, asio::use_awaitable);
-    std::vector<mysql::field_view> views;
-    for (const auto& parameter : parameters) views.emplace_back(parameter);
-    mysql::results result;
-    std::exception_ptr failure;
-    try {
-        co_await connection.async_execute(statement.bind(views.begin(), views.end()),
-                                          result, asio::use_awaitable);
-    } catch (...) {
-        failure = std::current_exception();
-    }
-    boost::system::error_code close_error;
-    co_await connection.async_close_statement(statement,
-        asio::redirect_error(asio::use_awaitable, close_error));
-    if (close_error) Disconnect(connection);
-    if (failure) std::rethrow_exception(failure);
-    if (close_error) throw boost::system::system_error(close_error);
-    co_return result;
-}
-
-template<class... Args>
-asio::awaitable<mysql::results> Execute(Connection& connection, std::string_view sql,
-                                       Args&&... args) {
-    return Query(connection, std::string(sql),
-                 std::vector<mysql::field>{mysql::field(std::forward<Args>(args))...});
-}
-
-asio::awaitable<json> Transaction(Connection& connection,
-                                 std::function<asio::awaitable<json>()> body) {
-    mysql::results result;
-    co_await connection.async_execute("START TRANSACTION", result, asio::use_awaitable);
-    std::exception_ptr failure;
-    json output;
-    try {
-        output = co_await body();
-        co_await connection.async_execute("COMMIT", result, asio::use_awaitable);
-    } catch (...) {
-        failure = std::current_exception();
-    }
-    if (failure) {
-        boost::system::error_code error;
-        co_await connection.async_execute("ROLLBACK", result,
-            asio::redirect_error(asio::use_awaitable, error));
-        if (error) Disconnect(connection);
-        std::rethrow_exception(failure);
-    }
-    co_return output;
-}
+using db::Execute;
+using db::Transaction;
+using db::Value;
 
 bool Hex(std::string_view value, std::size_t length) {
     return value.size() == length && std::all_of(value.begin(), value.end(), [](char c) {
@@ -82,13 +29,6 @@ bool ClientId(std::string_view value) {
         } else if (!Hex(value.substr(index, 1), 1)) return false;
     }
     return true;
-}
-
-json Value(mysql::field_view field) {
-    if (field.is_null()) return nullptr;
-    if (field.is_int64()) return field.as_int64();
-    if (field.is_uint64()) return field.as_uint64();
-    return std::string(field.as_string());
 }
 
 const std::string kMediaSelect =
@@ -116,7 +56,9 @@ const std::string kMessageSelect =
     "CAST(UNIX_TIMESTAMP(h.time)*1000 AS UNSIGNED),h.client_msg_id,"
     "m.media_id,m.mime,m.actual_bytes,m.width,m.height,m.thumbnail_mime,"
     "m.thumbnail_bytes,m.thumbnail_width,m.thumbnail_height,h.conversation_seq,m.name,m.sha256 "
-    "FROM History h JOIN User u ON u.id=h.userid LEFT JOIN Media m ON m.media_id=h.media_id ";
+    ",l.live_id,l.owner_id,l.title,l.state "
+    "FROM History h JOIN User u ON u.id=h.userid LEFT JOIN Media m ON m.media_id=h.media_id "
+    "LEFT JOIN LiveSession l ON l.live_id=h.live_id ";
 
 json Message(mysql::row_view row) {
     json message = {{"message_id", std::to_string(row[0].as_int64())},
@@ -136,6 +78,9 @@ json Message(mysql::row_view row) {
             message["media"].erase("height");
         }
     }
+    if (!row[19].is_null())
+        message["live"] = {{"live_id", Value(row[19])}, {"owner_id", Value(row[20])},
+            {"title", Value(row[21])}, {"state", Value(row[22])}};
     return message;
 }
 }  // namespace

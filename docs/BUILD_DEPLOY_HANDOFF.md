@@ -316,3 +316,15 @@ Nginx `/etc/nginx/conf.d/chat-media.conf` 同时代理 `/media` 与 `/media/hls/
 两份真实公网新上传视频已自动生成 HLS，Qt 实际首帧、暂停定位、切档、续签通过；处理中可播放原件，完成后重新打开取得清晰度。运行快照 active/running、PID87336、NRestarts0，服务及子进程内存峰值约257MiB。入口仍为7000/80，后端6000/回环6002。
 
 完整构建命令、产物摘要、验证证据和回退边界见 `docs/STAGE8_AUTOMATIC_VOD_DELIVERY.md`。回退前恢复并核对 service 和 drop-in；新增任务表不自动删除，更不能覆盖上线后业务数据。
+
+## 14. 聊天直播接入（2026-10-15）
+
+ChatServer 当前发布目录 `/home/lth/chat_server/releases/20261015-153232-live`，生效的最后一个drop-in为 `/etc/systemd/system/chatserver.service.d/zz-live.conf`；原 `media-processing.conf` 中的 media_process 路径继续用于点播转码。不要只改主service或较早的drop-in判断已切换。
+
+本次备份位于 `/home/lth/chat_server/backups/20261015-153232-live`，含数据库、媒体与配置；数据库在独立临时库验证恢复计数，已应用005直播表迁移。ChatServer本机构建最终112.05秒，88,319,104字节，SHA-256 `938151e85424f7b23302eb21814097a02181b496deeeea59e6a5aaa0bebd4681`。
+
+SRS独立 `srs-chat.service`，本机固定源码构建6.0.184，云端只运行。配置和密钥在 `/home/lth/chat-live`，权限0600；HLS临时窗口在其 `hls` 子目录。Nginx通过 `/etc/nginx/snippets/chat-live.conf` 逐次鉴权后代理。1935用于公网RTMP发布，1985/8080/6003只监听loopback；HTTP观看仍走80，聊天仍走7000。云端ufw未启用、nft规则为空；tianmu_sama已放行云安全组1935，并通过实际公网推流验证。
+
+发布后SRS的 `hls_aof_ratio` 设为10，避免两秒目标×默认2.1倍的强制封段截断长GOP；当前运行配置与仓库模板一致，调整前配置另存 `srs-before-aof.conf`。不要将默认短阈值直接用于九秒以上GOP的文件源。
+
+公网已通过Windows C++ live_push→SRS→Qt HTTP-FLV/HLS、暂停重入、历史卡片点击播放、结束与陌生人拒绝，后续TS独立解码干净；另新建直播重复验证通过。Qt最终EXE在既有Debug目录，21,177,416字节，SHA-256 `d3a328d189b1e69b67cfe87b95abdc82414342562bf82319f07309a7d303f69f`。详细构建命令、验证边界、一次未稳定复现的HTTP超时诊断与运行路径见 `docs/STAGE9_LIVE_DELIVERY.md`。

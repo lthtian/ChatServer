@@ -25,6 +25,49 @@ AAC 与 FLTP 属于不同层次：AAC 是编码格式，FLTP 是解码后 PCM �
 
 本例同步地将整条音轨解码、转换并写入文件，不按现实时间等待，也不向声音设备提交数据。保存五秒音频可以少于五秒；真正播放还需要设备输出和缓冲管理。
 
+### AAC：编码配置与实际声音数据
+
+AAC（Advanced Audio Coding）是音频编码标准，AAC-LC 是其中常用的一种类型。它描述声音怎样压缩和还原，可以放在 MP4、FLV 等容器中，也可以通过网络传输，不是直播专用格式。
+
+AAC 编码通常对一批 PCM 采样做变换、量化和编码。得到的压缩数据保存实际声音内容，但不直接保存解码后 `L0 R0 L1 R1` 这样的 PCM 采样数组；解码器恢复 PCM 后，才涉及 S16/FLTP、平面/交错等内存格式。
+
+```text
+PCM 采样 → AAC 编码 → AAC 编码声音 → 解码 → PCM 采样
+                              ↑
+                       需要对应的音频配置
+```
+
+### AudioSpecificConfig 的作用
+
+`AudioSpecificConfig` 是 MPEG-4 音频配置结构，可以描述音频对象类型、采样率或采样率索引、声道配置等。它告诉解码器按什么参数解释后续编码声音，本身不能播放成一段声音。
+
+| 配置内容 | 意义 |
+|---|---|
+| 音频对象类型 | 使用哪种编码工具，例如 AAC-LC |
+| 采样率 | 对应音频采样时间尺度，例如 48000 Hz |
+| 声道配置 | 对应的声道数量与排列；某些配置还需要从编码数据中取得具体描述 |
+
+“AAC、48 kHz、双声道”说明编码类型和音频参数，不表示压缩字节按双声道 PCM 交错存放；也不能据此认定解码输出一定是 S16 或 FLTP。
+
+### 配置与编码包怎样交给解码器
+
+MP4 的音频轨道描述通常保存 AudioSpecificConfig。FFmpeg 解封装后，将相关初始化信息放入 `codecpar->extradata`，将实际编码声音作为 AVPacket 交给应用：
+
+```text
+codecpar（包括 AudioSpecificConfig 等初始化信息）
+  → avcodec_parameters_to_context()
+  → avcodec_open2()
+
+av_read_frame() 读取 AAC 编码包
+  → avcodec_send_packet()
+  → avcodec_receive_frame() 得到 PCM 帧
+  → swr_convert() 转换 PCM 的采样率、格式和声道布局
+```
+
+AudioSpecificConfig 不等于 AVFrame 的样本格式，也不能代替 PCM 帧；重采样器处理的是解码后的 PCM，不处理 AAC 压缩数据。
+
+AAC 的封装方式也可以不同：ADTS 会在音频数据块前放头部，携带采样率和声道配置等信息；MP4 通常在轨道描述中保存配置。后续 FLV 阶段使用的 “AAC raw” 指没有额外 ADTS 头的 AAC 编码载荷，仍是压缩数据，不是裸 PCM。具体需要的配置必须由相应封装和编码结构提供，不能只看扩展名。
+
 ## 2. 采样、频率与数值精度
 
 ### 一个采样是什么

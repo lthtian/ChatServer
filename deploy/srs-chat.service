@@ -1,0 +1,18 @@
+[Unit]
+Description=Chat live media service
+After=network.target
+
+[Service]
+Type=simple
+User=lth
+Group=lth
+WorkingDirectory=/home/lth/chat-live
+ExecStart=__RELEASE__/srs -c /home/lth/chat-live/srs.conf
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

@@ -1,4 +1,5 @@
 #include "chatservice.hpp"
+#include "live_service.hpp"
 #include "public.hpp"
 #include "async_connectionpool.hpp"
 #include "log.hpp"
@@ -208,14 +209,18 @@ asio::awaitable<void> ChatService::mediaRequest(const Session::Ptr& session, jso
         if (!media_service_) throw chat::media::MediaError("unavailable");
         const auto id = request.at("request_id").get<std::string>();
         if (id.empty() || id.size() > 64) throw chat::media::MediaError("invalid_argument");
-        response["data"] = co_await media_service_->request(sender, session, request);
+        const auto operation = request.value("op", "");
+        if (operation.starts_with("live_")) {
+            if (!live_service_) throw chat::media::MediaError("live_unavailable");
+            response["data"] = co_await live_service_->request(sender, session, request);
+        } else response["data"] = co_await media_service_->request(sender, session, request);
         response["ok"] = true;
     } catch (const chat::media::MediaError& error) { response["error"] = error.what(); }
       catch (const json::exception&) { response["error"] = "invalid_argument"; }
       catch (const std::exception&) { response["error"] = "unavailable"; }
     session->send(response.dump());
     const auto operation = request.value("op", "");
-    if (response["ok"] != true || (operation != "publish" && operation != "send_text") ||
+    if (response["ok"] != true || (operation != "publish" && operation != "send_text" && operation != "live_create") ||
         !response["data"].value("created", false)) co_return;
     try {
         const bool group = request["conversation"]["is_group"];
@@ -236,6 +241,27 @@ asio::awaitable<void> ChatService::mediaRequest(const Session::Ptr& session, jso
     } catch (const std::exception&) {
         LOG_ERROR << "[MEDIA] Message committed; live notification failed";
     }
+}
+
+asio::awaitable<void> ChatService::notifyLive(json live)
+{
+    try {
+        const bool group = live.at("is_group");
+        const int owner = live.at("owner_id");
+        const std::string key = live.at("chatkey");
+        const auto separator = key.find('#');
+        const int first = std::stoi(key.substr(0, separator));
+        const int other = group ? first : (first == owner ? std::stoi(key.substr(separator + 1)) : first);
+        auto recipients = group ? co_await _groupModel.queryGroupUsersById(other, owner) : std::vector<int>{other};
+        recipients.push_back(owner);
+        for (const int recipient : recipients) {
+            json event = {{"msgid", 29}, {"live", live}, {"conversation", {
+                {"is_group", group}, {"target", group ? other : (recipient == owner ? other : owner)}}}};
+            const auto connection = _userConnMap.find(recipient);
+            if (connection != _userConnMap.end()) connection->second->send(event.dump());
+            else _redis.publish(recipient, event.dump());
+        }
+    } catch (const std::exception&) { LOG_ERROR << "[LIVE] State notification deferred"; }
 }
 
 asio::awaitable<void> ChatService::init(const Session::Ptr &session, json js, Timestamp time)

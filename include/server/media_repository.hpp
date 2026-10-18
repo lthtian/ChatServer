@@ -70,9 +70,10 @@ public:
         std::int64_t cursor, std::int64_t through, int limit);
     boost::asio::awaitable<nlohmann::json> access(
         int actor, Conversation conversation, std::string media_id);
+    // 文件和直播共用同一好友/群成员权限规则。
+    boost::asio::awaitable<void> authorize(int actor, Conversation conversation);
 
 private:
-    boost::asio::awaitable<void> authorize(int actor, Conversation conversation);
     boost::mysql::tcp_connection& connection_;
 };
 
