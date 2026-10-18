@@ -337,3 +337,7 @@ tianmu_sama补充关闭桌面直播控制窗口很久才消失。使用真实聊
 ### 2026-10-16 部署文件的版本控制范围
 
 tianmu_sama明确项目必需的部署文件应随源码保存。deploy采用逐文件放行：SRS/Nginx/systemd配置、服务端与SRS本机构建脚本、媒体处理与直播安装脚本，共10个文件；docs继续忽略，live-remote.py依赖本机ignored远程凭证工具、build-live-push.sh仅为独立样例诊断，保留本地。只编辑.gitignore，不暂存、提交或推送。配置仍含当前公网IP、Linux用户与目录，构建脚本仍依赖现有WSL工作区，不宣称通用部署器。注意install-live-server.sh接收的nginx-chat-media.conf原由live-remote.py基于远端配置加入chat-live.conf的include后打包；直接复制仓库基础Nginx文件不等价于完整直播部署，未来整理部署入口时应显式处理此依赖。
+
+### 2026-10-18 SRS 配置知识补充
+
+tianmu_sama要求简洁记录SRS配置，并询问RTP/RTCP与现有直播的区别。9.2文档新增SRS配置与进程启动小节：模板/实际配置/占位替换、端口分工、GOP与HLS、回调鉴权、systemd管理及配置生效边界；文档不加入外部链接。协议说明核对RFC3550、6184、4585、8834：RTP携带按编码负载格式打包的媒体，RTCP报告质量与时钟关系，常见扩展提供反馈；通常用UDP但不限定UDP，不承诺可靠或低延迟。现有RTMP/HTTP-FLV/HLS链路未使用RTP/RTCP，当前SRS构建关闭RTC。
