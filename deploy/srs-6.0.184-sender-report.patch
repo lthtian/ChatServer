@@ -1,0 +1,102 @@
+--- a/src/app/srs_app_rtc_source.hpp
++++ b/src/app/srs_app_rtc_source.hpp
+@@ -706,6 +706,11 @@
+     // The jitter to correct ts and sequence number.
+     SrsRtcTsJitter* jitter_ts_;
+     SrsRtcSeqJitter* jitter_seq_;
++    // 每条发送轨道的 SR 发送间隔与累计负载统计。
++    srs_utime_t report_time_;
++    uint32_t report_packets_;
++    uint32_t report_bytes_;
++    srs_error_t report_packet(SrsRtpPacket* pkt);
+ private:
+     // By config, whether no copy.
+     bool nack_no_copy_;
+--- a/src/app/srs_app_rtc_source.cpp
++++ b/src/app/srs_app_rtc_source.cpp
+@@ -2549,7 +2549,7 @@
+             return;
+         }
+         
+-        double rtp_time_elpased = static_cast<double>(last_sender_report_rtp_time_) - static_cast<double>(last_sender_report_rtp_time1_);
++        double rtp_time_elpased = static_cast<double>(int32_t(last_sender_report_rtp_time_ - last_sender_report_rtp_time1_));
+         double rate = round(rtp_time_elpased / sys_time_elapsed);
+ 
+         // TODO: FIXME: use the sample rate from sdp.
+@@ -2565,7 +2565,7 @@
+         return -1;
+     }
+ 
+-    double delta = round((rtp_time - last_sender_report_rtp_time_) / rate_);
++    double delta = round(int32_t(rtp_time - last_sender_report_rtp_time_) / rate_);
+ 
+     int64_t avsync_time = delta + last_sender_report_ntp_.system_ms_;
+ 
+@@ -2814,6 +2814,9 @@
+     // Make a different start of sequence number, for debugging.
+     jitter_ts_ = new SrsRtcTsJitter(track_desc_->type_ == "audio" ? 10000 : 20000);
+     jitter_seq_ = new SrsRtcSeqJitter(track_desc_->type_ == "audio" ? 100 : 200);
++    report_time_ = 0;
++    report_packets_ = 0;
++    report_bytes_ = 0;
+ 
+     if (is_audio) {
+         rtp_queue_ = new SrsRtpRingBuffer(100);
+@@ -2892,6 +2895,35 @@
+     pkt->header.set_timestamp(jitter_ts_->correct(ts));
+ 
+     srs_info("RTC: Correct %s seq=%u/%u, ts=%u/%u", track_desc_->type_.c_str(), seq, pkt->header.get_sequence(), ts, pkt->header.get_timestamp());
++}
++
++// 发布端 SR 确定采集时刻，观看端 SR 必须使用改写后的 SSRC 和 RTP 时间戳。
++srs_error_t SrsRtcSendTrack::report_packet(SrsRtpPacket* pkt)
++{
++    ++report_packets_;
++    report_bytes_ += pkt->payload() ? pkt->payload()->nb_bytes() : 0;
++    const srs_utime_t now = srs_update_system_time();
++    if (pkt->get_avsync_time() <= 0 || now - report_time_ < SRS_UTIME_SECONDS) {
++        return srs_success;
++    }
++    // NTP 使用 1900 年纪元；按 SDP 时钟频率推算报告发送时刻的 RTP 值。
++    // 不能直接把当前时间与最后一个已采集包的 RTP 值配成一对。
++    const int64_t ntp_ms = now / SRS_UTIME_MILLISECONDS + 2208988800000LL;
++    const int64_t delta = ntp_ms - pkt->get_avsync_time();
++    const int64_t rate = track_desc_->media_->sample_;
++    SrsRtcpSR report;
++    report.set_ssrc(pkt->header.get_ssrc());
++    report.set_ntp(SrsNtp::from_time_ms(ntp_ms).ntp_);
++    report.set_rtp_ts(pkt->header.get_timestamp() + uint32_t(delta * rate / 1000));
++    report.set_rtp_send_packets(report_packets_);
++    report.set_rtp_send_bytes(report_bytes_);
++    char bytes[kRtpPacketSize];
++    SrsBuffer buffer(bytes, sizeof(bytes));
++    srs_error_t err = report.encode(&buffer);
++    if (err != srs_success) return srs_error_wrap(err, "encode sender report");
++    report_time_ = now;
++    // 复用连接的 SRTCP 加密与 UDP 发送，不另外建立连接。
++    return session_->send_rtcp(bytes, buffer.pos());
+ }
+ 
+ srs_error_t SrsRtcSendTrack::on_nack(SrsRtpPacket** ppkt)
+@@ -2978,6 +3010,10 @@
+         return srs_error_wrap(err, "raw send");
+     }
+ 
++    if ((err = report_packet(pkt)) != srs_success) {
++        return srs_error_wrap(err, "sender report");
++    }
++
+     srs_info("RTC: Send audio ssrc=%d, seqno=%d, keyframe=%d, ts=%u", pkt->header.get_ssrc(),
+         pkt->header.get_sequence(), pkt->is_keyframe(), pkt->header.get_timestamp());
+ 
+@@ -3028,6 +3064,10 @@
+         return srs_error_wrap(err, "raw send");
+     }
+ 
++    if ((err = report_packet(pkt)) != srs_success) {
++        return srs_error_wrap(err, "sender report");
++    }
++
+     srs_info("RTC: Send video ssrc=%d, seqno=%d, keyframe=%d, ts=%u", pkt->header.get_ssrc(),
+         pkt->header.get_sequence(), pkt->is_keyframe(), pkt->header.get_timestamp());
+ 

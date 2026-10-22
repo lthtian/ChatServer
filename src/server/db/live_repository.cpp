@@ -9,11 +9,11 @@ using json = nlohmann::json;
 using db::Execute;
 using db::Value;
 namespace {
-const std::string kSelect = "SELECT live_id,owner_id,title,state,chatkey,isgroup,publisher_id FROM LiveSession ";
+const std::string kSelect = "SELECT live_id,owner_id,title,state,chatkey,isgroup,publisher_id,transport FROM LiveSession ";
 json Record(boost::mysql::row_view row) {
     return {{"live_id", Value(row[0])}, {"owner_id", Value(row[1])}, {"title", Value(row[2])},
         {"state", Value(row[3])}, {"chatkey", Value(row[4])}, {"is_group", row[5].as_int64() != 0},
-        {"publisher_id", Value(row[6])}};
+        {"publisher_id", Value(row[6])}, {"transport", Value(row[7])}};
 }
 }
 
@@ -34,7 +34,8 @@ asio::awaitable<json> LiveRepository::access(int actor, Conversation conversatio
 }
 
 asio::awaitable<json> LiveRepository::create(int actor, Conversation conversation,
-    std::string client_id, std::string title, std::string id) {
+    std::string client_id, std::string title, std::string id, std::string transport) {
+    if (transport != "rtmp" && transport != "webrtc") throw MediaError("invalid_argument");
     if (!std::regex_match(client_id, std::regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")) ||
         title.empty() || title.size() > 480 || std::any_of(title.begin(), title.end(),
             [](unsigned char c) { return c < 32; })) throw MediaError("invalid_argument");
@@ -48,13 +49,14 @@ asio::awaitable<json> LiveRepository::create(int actor, Conversation conversatio
         if (created) {
             const auto active = co_await Execute(connection_, "SELECT live_id FROM LiveSession WHERE owner_id=? AND state<>'ended'", actor);
             if (!active.rows().empty()) throw MediaError("live_already_exists");
-            co_await Execute(connection_, "INSERT INTO LiveSession(live_id,owner_id,client_msg_id,chatkey,isgroup,title) VALUES(?,?,?,?,?,?)",
-                id, actor, client_id, conversation.key(actor), conversation.is_group ? 1 : 0, title);
+            co_await Execute(connection_, "INSERT INTO LiveSession(live_id,owner_id,client_msg_id,chatkey,isgroup,title,transport) VALUES(?,?,?,?,?,?,?)",
+                id, actor, client_id, conversation.key(actor), conversation.is_group ? 1 : 0, title, transport);
             co_await Execute(connection_, "INSERT INTO History(chatkey,userid,isgroup,message,kind,client_msg_id,live_id) VALUES(?,?,?,?,'live',?,?)",
                 conversation.key(actor), actor, conversation.is_group ? 1 : 0, title, client_id, id);
         } else {
             const auto live = Record(previous.rows()[0]);
-            if (live["title"] != title || live["chatkey"] != conversation.key(actor) || live["is_group"] != conversation.is_group)
+            if (live["title"] != title || live["chatkey"] != conversation.key(actor) || live["is_group"] != conversation.is_group ||
+                live["transport"] != transport)
                 throw MediaError("state_conflict");
             id = live["live_id"];
         }

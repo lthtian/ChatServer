@@ -341,3 +341,82 @@ tianmu_sama明确项目必需的部署文件应随源码保存。deploy采用逐
 ### 2026-10-18 SRS 配置知识补充
 
 tianmu_sama要求简洁记录SRS配置，并询问RTP/RTCP与现有直播的区别。9.2文档新增SRS配置与进程启动小节：模板/实际配置/占位替换、端口分工、GOP与HLS、回调鉴权、systemd管理及配置生效边界；文档不加入外部链接。协议说明核对RFC3550、6184、4585、8834：RTP携带按编码负载格式打包的媒体，RTCP报告质量与时钟关系，常见扩展提供反馈；通常用UDP但不限定UDP，不承诺可靠或低延迟。现有RTMP/HTTP-FLV/HLS链路未使用RTP/RTCP，当前SRS构建关闭RTC。
+
+### 2026-10-18 阶段10.1准备与独立worktree
+
+tianmu_sama确认第十阶段先做RTP/RTCP教学小项目，再在10.2接入WebRTC摄像头直播。本轮明确授权先创建worktree，使用其已经建立的future_rtp分支，代码须等待下一次“开始”确认。已创建并附加C:/Users/lds/.codex/worktrees/rtp-rtcp/ChatServer，绑定future_rtp；原D:/chat_server/ChatServer仍在main。该授权仅覆盖本次worktree与分支绑定，暂存、提交、推送等仍由用户决定。
+
+10.1采用独立发送端与Qt接收端，先用已有文件做视频RTP/UDP收发和RTCP基础报告，关注H.264分包重组、有限乱序缓冲、丢包与时间戳，不先接摄像头或修改聊天业务。头文件中的函数与成员、源文件中的关键处理均需中文注释；学习文档应独立讲清RTP/RTCP关系、包结构、数据单位与发送/接收链路，并保持无外部链接。新代码拟放lessons/rtp_rtcp，待开始确认后实施，现未创建该项目。
+
+### 2026-10-18 阶段10.1完成
+
+tianmu_sama确认开始后，仅在future_rtp独立worktree实现lessons/rtp_rtcp。三项工作均已完成：RTP/H.264负载与RTCP；文件发送端/Qt接收端；必要真实验证和知识文档。QtNetwork负责UDP事件循环，自写头编解码、NAL/FU-A/STAP-A、256包/50ms重排与缺包等IDR恢复；FFmpeg负责解封装、h264_mp4toannexb、解码与RGB转换。视频单轨、无B帧，原D:/test_video.mp4有2帧重排，生成640x362/25fps/5秒125帧副本，不改原件。头/源均有中文注释、UTF8 BOM，无copyright或ABOUTME；未改聊天业务、Qt主客户端或部署。
+
+Qt5.15.2/MinGW8.1/Ninja Debug x64，首次构造重载歧义编译失败8.41秒，核对进程和头文件后用单名称参数修正；首次成功Ninja21.217秒，最终增量6.19秒Full build passed，无警告。固定字节检查与真实UDP正常/丢包/乱序、RGB参考、FFmpeg双向互通均通过；正常273包125解码帧，首帧RGB误差0，125幅YUV哈希与原文件完全一致。每97包丢一包时确认2个缺口，丢弃31 AU后解码94帧，两次恢复至IDR。每29包丢一包会持续破坏恢复关键帧，仅11帧，这是教学现象，不通过容忍缺片来绕过。
+
+外部FFmpeg首SR先于首RTP，初版直接忽略导致五秒内无RR。独立UDP观察确认同SSRC顺序后，最多暂存一份SR，地址/SSRC与媒体匹配后关联，DLSR保留原到达时刻；最终外部互通1份SR、7份RR。Windows实际窗口补验125解码/124显示、无缺口，已查看截图；截图写盘/调度丢过时画面属于显示层，不宣称物理显示125帧。输入B帧/文件缺失的预期错误均捕获断言。协议、正常日志无未处理错误，没有mock。
+
+知识文档10.1-RTP与RTCP.md讲数据层次、12字节RTP头、FU-A/STAP-A、SDP、90k时钟与回绕、RTCP公共头及SR/RR/SDES/BYE、质量统计和收发API链；运行/构建在README，证据在STAGE10_RTP_DELIVERY.md及build/verification。路线已细化10.1与10.2，后者WebRTC摄像头尚未实施。本轮没有任何Git写操作，创建worktree和绑定future_rtp是上一轮明确授权的操作；main保持独立。
+
+### 2026-10-18 阶段10.2方案讨论
+
+tianmu_sama本轮仅询问实施方案，尚未要求开始。其已明确：正式实施时，Qt前端也创建独立worktree，分支使用future_rtp，与服务端一致；本轮不创建。方案候选为Qt摄像头/可选麦克风→H.264/Opus→原生WebRTC→SRS→WebRTC观看，复用聊天授权/卡片/状态及合适的采集、编解码、显示组件。首先验证libdatachannel与当前Qt5.15/MinGW8.1兼容性及SRS互通。现有StreamEncoder将H.264/AAC和FLV/RTMP输出耦合，不能整体直接用于WebRTC；播放器AVFormatContext网络入口也不能简单替换URL。SRS构建仍为rtc=off，未来需要本机构建、配置RTC媒体端口和公网candidate，并补齐会话鉴权/清理，不公开全部管理API。上述技术方案待用户确认实施，不当作已实现。
+
+### 2026-10-18 阶段10.2实施中
+
+tianmu_sama确认直接接入现有ChatServer与ChatClient并授权开始；互通检查只是实施步骤，不交付另一个教学项目。当前计划：1）确认原生RTC依赖与本机构建；2）扩展LiveService及SRS信令/会话授权；3）Qt摄像头、H.264/Opus发布与RTC观看；4）真实双客户端验证、本机构建后部署、分别补充服务端与客户端知识。前端future_rtp worktree需创建，但本轮新AGENTS明确Git只读，已询问仅本次创建例外，等待回答；服务器沿用已有worktree。
+
+已检查WSL ChatUbuntu可启动，SRS源码6.0.184的WHIP/WHEP支持201 SDP响应与Location/DELETE，管理API继续loopback。libdatachannel v0.24.6源码和固定submodule版本通过官方源码归档读取（GitHub API限流，改读官方仓库页面取得固定提交，不执行Git写入）；准备核对Qt5.15/MinGW8.1构建。尚未编译、采集摄像头或部署。
+
+实施进度：服务端已写入transport字段/006迁移、RTC信令代理、一次建连票据与会话资源映射、SRS回调及权限/退出清理，尚未编译验证。增加独立WSL构建脚本，避免原构建脚本从main复制源码；Nginx仅公开业务RTC路径，SRS API保持loopback。知识文档10.2已起草，客户端链路待实际接入后补全。
+
+依赖检查：MbedTLS3.6.4 Release/MinGW x64静态构建通过25.08秒；libdatachannel首次双并发56.00秒因Windows提交内存仅约300MiB而失败，已请用户释放内存，未结束用户程序。检测内存恢复3.3GiB后串行构建，37.15秒确认另一独立问题：GCC8.1无法解析NalUnits的[[deprecated]]与__declspec(dllexport)组合。依赖提供的datachannel-static目标定义RTC_STATIC，可避开DLL导出语法，正在按该原生目标验证，没有改Qt或安装编译器。保留第三方编译警告和失败日志。SRS本机configure启用RTC并关闭跨协议转码，成功；主体尚未构建，云端未改。
+
+静态目标第一次94.36秒停在MbedTLS缺少DTLS-SRTP API；核对官方配置头后用scripts/config.py启用MBEDTLS_SSL_DTLS_SRTP（默认关闭），重编MbedTLS37.23秒通过并安装到任务独立前缀。libdatachannel-static最终Release/x64构建91.52秒通过，产物D:/chat/_deps/rtc/datachannel-build/libdatachannel-static.a；第三方libsrtp格式字符串、Windows GetProcAddress函数指针转换有警告，尚未实际收发或链接Qt客户端。依赖未修改已安装Qt/MinGW，待前端创建授权后将固定版本/配置/链接方法纳入项目构建说明。服务端在/opt/chat-build/rtc独立源码和缓存开始构建，Git创建问题仍待回复。
+
+内存观察：WSL不活动时Windows可提交内存约3.3GiB，启动发行版后降到约400MiB，但WSL内部仍有约6.7GiB可用。后续Windows与WSL大编译应错开，不能把物理空闲6GiB当作Windows提交空间足够。libdatachannel-static.a实际5,794,802字节，SHA256 cf35abd7dc14a69c084b0ce13c9260fa07c92a3472f283300140416e1753afa4。SRS configure成功不等于SRS主体构建完成。
+
+10.2 本机服务端构建中断：exec 68314 异常退出1，无编译诊断；原观察到PCH阶段，重查日志为零字节。Windows System 18:13:13 Resource-Exhaustion-Detector事件2004证实虚拟内存不足；WSL uptime重置、journald报告非正常关闭。已停止构建重试，无遗留cmake/cc1plus，尚未获得可部署服务端产物。此前释放内存问题仍待用户回复，前端worktree Git例外也未回复；不关闭用户程序，不修改WSL/页面文件配置。
+
+静态核对SRS 6.0.184源码，修正两处接入假设：SrsHttpMessage::query经UF_QUERY解析不含问号，因此RTC hook参数为app=camera...；srs_generate_stream_url对默认vhost省略前缀，client.url可为/camera/id，因此清理匹配允许空vhost。均逐项核对源头和调用点，没有兼容猜测格式。SDP返回后再校验登录/聊天权限，防止等待期间撤权仍交付Answer；失败在catch外删除上游资源。测试fixture补006迁移，尚未运行。详细进度、命令、失败分类和未完成事项保存docs/STAGE10_RTC_DELIVERY.md。所有云端状态未改，Qt前端未改，未采集摄像头或麦克风。
+10.2继续：用户明确授权仅创建前端worktree/分支，并释放内存；可提交余量约11.7GiB。执行git worktree add -b future_rtp E:/chat_server_qt/ChatClient-rtc main成功，没有其他Git写。服务端重试立即失败的根因另为上次WSL异常关闭留下的零字节.source-origin和CMakeCache，不是本次仍缺内存；bash -x核实后修复本任务来源标记，配置无效缓存（没有Clean），增量构建ChatServer Release/Linux x64 4:00.85 Full build passed，无warning/error。产物98,855,928字节，2026-10-18 18:45:10，SHA256 e8b14eb00efa1433f277ed6d90140498250fa784b6fff8b7cd74097798d1e1e2。WSL持久交互exec session53475可继续用。
+
+前端rtc模块已写入H264/Opus编解码、原生RTC WHIP/WHEP会话、有限RTP重排和H264访问单元重组、RTCP SR公共时钟、摄像头预览/观看窗口；MainWindow创建菜单和卡片按transport分发。RTP解析与重组复制10.1算法到前端，删去发送端教学函数，前端不引用服务端目录。仍需真实验证边界与UI生命周期。首编21.86秒在RtcpSrReporter final继承失败，检查后改组合持有；第二编60.42秒ChatClient Debug/MinGW x64 Full build passed，37,165,728字节，PE8664，SHA256 63dd296aa840cbf9d26bb2085ae8c891194228fbaa061442a968197728e81f11。只有原项目成员初始化/未用参数/Qt弃用信号警告，新RTC模块无警告。部署Qt/FFmpeg依赖到该worktree输出，不动main输出。已询问UDP8000安全组，待回复。Pnp枚举未看到相机，稍后以Qt实际枚举确认；没有采集相机/麦克风。尚未部署云端。
+10.2真实联调发现互通前提错误：libdatachannel发布通过SRS鉴权/ICE/DTLS，观看连接也Connected，但0画面/0音频后报“RTC等待时钟的缓存达到上限”。核对SRS6.0.184：on_rtcp_sr只更新接收轨道用于RTC转RTMP的avsync，发送轨道改写SSRC/RTP起点却没有send_rtcp_sr。6.0release和7.0release官方源码同样没有；develop已包含发送SR。不是网络不通或单纯缓存太小。已询问用户选择当前SRS小补丁还是按到达时间近似同步；未擅自升级SRS或加大缓存。Qt设备枚举0相机/0输出设备，UDP8000和设备问题待回复。SRS本机构建47.38秒、rtc_smoke编译37.53秒通过，但本次端到端验证失败，不能宣称10.2可用。测试清理还发现QFile配置一直打开、cmd终止不等于Windows子进程终止，改为读完关闭文件并等测试进程自身限时Stop。
+10.2继续：用户确认UDP8000已开放，暂时没有摄像头/耳机，允许先验证软件链路；明确选择补齐当前SRS的SR发送，不采用收包时间近似同步。已生成固定6.0.184补丁，发送轨道在RTP重写后按公共NTP及SDP时钟构造SR，复用SRTCP；处理RTP模32时间差，构建脚本可检查补丁已应用。正本地增量编译，未部署。
+SR补丁本机SRS增量43.97秒Full build passed，25d49da9916315a88d9728c3f9796140870a9296cc0f339f20965158dd8e5f47；保留上游inotify name和GNU-stack链接警告。真实观看首轮406视频/985音频，窗口415帧；结束断言错误要求UDP马上报告断开，实际正常限时Stop退出0。修正诊断流程为先断言SRS会话已撤销，再触发界面同等Stop；Opus内部尾帧在析构排空丢弃，避免结束时1 frames left警告。最终真实fixture PASS：396视频/984音频、末尾时间差44.944ms，窗口383帧、关闭成功，创建幂等/权限/历史/结束/资源删除通过。不是相机或有声播放验收。Qt主程序最终增量日志约26秒Full build passed，37,167,318字节，2026-10-18 19:22:50，SHA256 75d5a5cb8e87eec109c47731681e5223f4707c7b7bc088b742c12f63a68ea04a。已查看真实观看截图正常。云端部署前SRS clients=0，相关业务场次0；正在上传本机产物，升级脚本保存DB/配置备份并可恢复原服务配置，尚未确认部署完成。
+10.2软件交付完成：云部署20261018-192601-rtc，备份同名位于chat_server/backups，006迁移+RTC端口+SR补丁已安装，没有云编译。公网两进程20秒400视频帧/962音频块，末尾PTS差46.756ms；实际CameraWindow20秒398显示帧，截图已核对。发布/观看/end/cleanup PASS，专用29/30账号场次结束，SRS clients=0、活动直播=0，ChatServer PID151309/SRS151313、NRestarts0，UDP8000监听。软件输出由样本PNG和静音Opus经过真实编码和公网RTC得到，未采集用户桌面或硬件，不能把PTS差当成耳机实测音画差。用户明确暂缺硬件，所以相机/麦克风/有声输出按其安排待验。前端运行E:/chat_server_qt/ChatClient-rtc/build/rtc/debug/ChatClient.exe；原main不替换。README、10.2知识文档、STAGE10_RTC_DELIVERY已更新。现有tracked pyc在早期fixture运行中改动，后续均用-B；不执行Git恢复或取消跟踪，用户控制Git写。
+
+### 2026-10-18 摄像头直播麦克风中断调查
+
+tianmu_sama 在笔记本确认无声摄像头直播正常，勾选麦克风后反复中断，截图明确为“编码落后超过半秒”。现源码 RtcConnection::run 在 origin 建立后才创建 CameraEncoder，且每次开启麦克风都在推流循环内同步构造 AudioCapture（WASAPI Activate/Initialize/Start），elapsed 还在打开设备之前取值。首要假设是设备启动阻塞导致下一轮 sample 落后超过 500ms，并非已证明 CPU 编码性能不足；需测量区分。复现时间（开播前勾选还是播中开启）已询问。本机有 DELI-MIC，无相机/输出端点。依据用户小改动禁止自动编译测试规则，已请求诊断采集和修复后编译授权，尚未运行或采集。继续使用前端 future_rtp worktree E:/chat_server_qt/ChatClient-rtc，不触碰 main 或部署服务端。
+
+### 2026-10-18 麦克风启停阻塞修复
+
+tianmu_sama确认起播前勾选、直播中勾选都会失败，并明确允许本机麦克风诊断、修复后编译；音频不上传、不保存。原路径诊断调用真实AudioCapture/CameraEncoder，本机初始化313.279ms/286.463ms，Poll最多655us、Audio最多784us，没有复现笔记本500ms异常。因此已确认初始化阻塞编码线程的缺陷，但不能把本机测量当作笔记本根因完全验证。
+
+新增MicrophoneCapture设备线程，独占WASAPI构造/Poll/析构及COM；编码线程仅SetEnabled和Mix，锁不覆盖初始化/释放，未就绪输出静音，维持共同QPC原点。RtcConnection复用该类，保留500ms真实积压保护，设备错误降为无声并允许开关重试。未改服务端或部署。真实本机启动/两次重开/开到一半关闭通过：ready3、422音频包本地编码解码、maxlag147.553ms、maxvideogap99.906ms、Mix最多143us、PCM RMS0.00171322，设备启动中关闭286.406ms；无网络、无录音文件、无mock。笔记本重测仍待用户。
+
+诊断microphone_probe Debug/MinGW x64构建8.458s；microphone_capture_smoke9.955s；ChatClient17.529s，全部Full build passed，无warning/error。主程序38,147,370字节，2026-10-18 20:17:05，PE8664，SHA256 b1ce8952a7ad25ddaa05aa1815c1ed4436f12314f7879a10e251910689e5713b。保留原BOM，新Windows源码带BOM。没有运行主程序、结束用户进程或Git写入。10.2知识文档仅补充设备启动与媒体时钟的区别，详细构建/验证见MICROPHONE_CAPTURE_FIX.md。
+
+### 2026-10-19 学习文档固定目录
+
+tianmu_sama再次明确：学习Markdown文档统一维护在D:/chat_server/ChatServer/docs/音视频学习，不放默认目录或worktree的docs。已将worktree中10.1、10.2和麦克风修复验证复制到指定目录，目标原先不存在，逐一SHA256验证一致；没有覆盖已有阶段笔记。后续该目录是学习文档唯一编辑入口，即使代码在future_rtp worktree中。工作树现存副本仅作历史保留，不再双处更新。
+
+### 2026-10-20 RTCP 基础关系补充
+
+tianmu_sama指出10.1直接进入RTCP字段，没有讲清它和RTP的关系。已在唯一学习文档入口D:/chat_server/ChatServer/docs/音视频学习/10.1-RTP与RTCP.md第8节加入并行报文关系、IP/UDP/RTP与IP/UDP/RTCP示意、SR/RR/SDES/BYE与反馈扩展职责、SSRC关联、非逐包ACK、UDP双端口/端口复用/TCP承载边界。文档无外链，原字段细节保留，未更新worktree历史副本。
+
+### 2026-10-21 第十阶段文档按概念与真实职责整理
+
+tianmu_sama要求文档直接说明概念的本质和关系、真实链路及对应API，压缩反复解释显然结论的“为什么”段落。仅修改D:/chat_server/ChatServer/docs/音视频学习中的10.1、10.2，worktree历史副本不更新。10.1集中补入H264/RTP独立关系、Annex B/BSF的转换目的、SDP参数描述与RTSP会话控制、UDP整包发送、FFmpeg能承担的协议能力；压缩分包和接收顺序的重复论述，保留字段/时间戳/SR/RR公式。RTCP写清独立UDP报文、双向端口、反馈→程序动作，10.1实际上仅观测报告，未自动调整RTP。10.2按当前代码区分FFmpeg/libdatachannel/自写模块，加入SRTCP的UDP路径、NACK响应、PLI到编码器关键帧、SR同步与SRS补丁，保留服务端/客户端分开链路；将麦克风线程知识归入发布流程，移除过时硬件待验流程文字。修正小NAL合包是可选聚合，不是小就必须多个合发。文档不加外部链接；仅做内容和Markdown结构检查，不构建。原稿备份在教学项目ignored build/document-backups下的.bak。
+
+2026-10-21 补充10.2：根据tianmu_sama要求，将WebRTC以RTP/RTCP为基础、相对10.1增加的协商/ICE/安全/反馈/同步、与既有RTMP分工及媒体路径对比、两段独立SRS会话和四处代码阅读重点写入D盘指定学习目录。复用原章节，未另建文档，文内无外链。
+
+2026-10-21 按tianmu_sama要求，在指定D盘10.2文档第1节补入SRTP/SRTCP保护位置：先保护RTP/RTCP，再装入UDP；附普通RTP和SRTP布局对比，说明RTP头通常明文、负载加密与安全尾字段，以及SRTCP索引/认证信息。文内无外链。
+
+### 2026-10-21 独立的 RTP/RTCP/WebRTC 知识体系文档
+
+tianmu_sama指出10.2偏向项目接口，不能支撑初学者理解知识关联，明确要求另建整体知识文档。已在唯一学习目录D:/chat_server/ChatServer/docs/音视频学习新增10-补充-RTP-RTCP-WebRTC知识体系.md，按媒体单位与RTP、RTCP反馈和时钟、SDP、ICE/STUN/TURN、DTLS/SRTP、WHIP/WHEP、媒体服务器与SRS回调、完整生命周期、凭据状态、库和应用职责组织，最后才对应项目代码。每部分说明数据是什么、交给谁处理、能通过代码调整什么，不用函数阅读路径代替基础知识。
+
+核对IETF正式规范、当前WHEP草案及SRS6官方说明和实际future_rtp代码：WHIP为RFC9725，WHEP截至2026-10-21仍是draft-ietf-wish-whep-05；SRS on_publish在当前WHIP返回Answer前参与鉴权，不证明ICE/DTLS或首帧成功；ChatServer只存业务会话关联，RTC握手状态在客户端库/SRS；SRS是独立媒体会话终点而非透明UDP转发。文内无外链，原10.1/10.2保留。仅进行技术内容、编码和Markdown静态核对。

@@ -64,6 +64,9 @@ _tests/
 /deploy/*
 !/deploy/build-media-server.sh
 !/deploy/build-srs.sh
+!/deploy/build-rtc-server.sh
+!/deploy/srs-6.0.184-sender-report.patch
+!/deploy/upgrade-rtc-server.sh
 !/deploy/install-media-server.sh
 !/deploy/install-live-server.sh
 !/deploy/chatserver-live.conf

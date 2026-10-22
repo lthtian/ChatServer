@@ -4,6 +4,7 @@
 #include <boost/beast.hpp>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace chat::media {
 // 直播业务控制；媒体字节由 SRS 发送，本类只处理授权、状态和内部回调。
@@ -24,8 +25,16 @@ private:
         std::string id;                         // 唯一直播 ID，不接受任意上游路径。
         bool publish;                           // 推流票据与观看票据用途分离。
         std::chrono::steady_clock::time_point deadline;  // 新连接授权截止时间。
+        bool rtc = false;                       // RTC 建连票据不能用于文件式直播读取。
     };
-    // 签发五分钟凭证；播放只返回本站 /live/ 入口。
+    struct RtcConnection {
+        Ticket access;                          // 会话存续期间检查登录和会话权限。
+        std::string token;                      // 删除会话的持有凭证，建立后不受建连期限限制。
+        std::string resource;                   // SRS 返回的内部 DELETE 路径，不暴露给客户端。
+        std::string client;                     // SRS 回调中的连接 ID，供状态核对。
+        std::chrono::steady_clock::time_point created; // 容许 ICE/DTLS 建连的短暂窗口。
+    };
+    // 签发五分钟凭证；HTTP 播放走 /live/，RTC 建连走 /rtc/。
     nlohmann::json descriptor(int actor, const Session::Ptr& session, Conversation conversation,
         const std::string& id, bool publish, const std::string& format);
     // 校验 token、会话和期限；返回副本避免 co_await 期间迭代器失效。
@@ -38,12 +47,23 @@ private:
     boost::asio::awaitable<void> authorize(std::string authorization, std::string path);
     // 只访问固定 loopback SRS API，不能由客户端指定 URL。
     boost::asio::awaitable<nlohmann::json> srs(std::string method, std::string path);
+    // 固定本机 SRS 上游：交换 SDP 或删除 RTC 资源，不转发任意 URL。
+    boost::asio::awaitable<boost::beast::http::response<boost::beast::http::string_body>>
+        rtc_upstream(boost::beast::http::verb method, std::string path, std::string body = {});
+    // 公网 /rtc/ 入口经 Nginx 转入此处，先校验业务票据再进行 WHIP/WHEP。
+    boost::asio::awaitable<boost::beast::http::response<boost::beast::http::string_body>>
+        rtc_request(const boost::beast::http::request<boost::beast::http::string_body>& request);
+    boost::asio::awaitable<void> prune_rtc(); // 登录退出、权限撤回、直播结束或媒体连接消失时清理。
     boost::asio::awaitable<void> monitor();  // 回调丢失或 SRS 重启时核对活跃流。
     boost::asio::ip::tcp::acceptor acceptor_;  // 仅内部控制 HTTP，不承载媒体数据。
     boost::asio::steady_timer timer_;         // 三秒核对一次状态。
     Notify notify_;                          // 状态变化交给聊天服务通知参与者。
     std::unordered_map<std::string, Ticket> tickets_;  // 有界短期凭证表。
+    std::unordered_map<std::string, RtcConnection> rtc_connections_; // 公开随机资源 ID 到内部会话的映射。
+    std::unordered_set<std::string> rtc_opening_;       // 防止同一建连票据并发重复使用。
+    std::unordered_map<std::string, std::string> rtc_clients_; // SDP 请求期间由 SRS 回调填入连接 ID。
     std::string url_;                         // 对外 HTTP 根地址，带 /live。
+    std::string rtc_url_;                     // 对外 RTC 信令根地址，带 /rtc；为空时禁止 RTC 创建。
     std::string rtmp_url_;                    // 对外 RTMP 应用地址，带 /live。
     std::string secret_;                      // SRS 回调共享密钥，不返回客户端。
     unsigned short api_port_ = 1985;          // SRS 内部管理 API 端口。

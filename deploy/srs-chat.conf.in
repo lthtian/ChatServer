@@ -5,6 +5,13 @@ pid __LIVE_ROOT__/srs.pid;
 srs_log_tank console;
 srs_log_level warn;
 
+# 公网候选地址必须是客户端可达的 ECS 地址；该端口承载 STUN/DTLS/SRTP。
+rtc_server {
+    enabled on;
+    listen 8000;
+    candidate 39.105.18.142;
+}
+
 http_api {
     enabled on;
     listen 127.0.0.1:1985;
@@ -15,6 +22,14 @@ http_server {
     dir __LIVE_ROOT__;
 }
 vhost __defaultVhost__ {
+    rtc {
+        enabled on;
+        nack on;
+        twcc off;
+        # 摄像头保持 H.264/Opus，通过 WebRTC 分发，不额外转 AAC。
+        rtmp_to_rtc off;
+        rtc_to_rtmp off;
+    }
     # 播放只接受本机 Nginx 的连接；公网 RTMP 入口仅用于带业务凭证的推流。
     security {
         enabled on;
@@ -49,5 +64,7 @@ vhost __defaultVhost__ {
         enabled on;
         on_publish http://127.0.0.1:6003/srs?secret=__HOOK_SECRET__;
         on_unpublish http://127.0.0.1:6003/srs?secret=__HOOK_SECRET__;
+        on_play http://127.0.0.1:6003/srs?secret=__HOOK_SECRET__;
+        on_stop http://127.0.0.1:6003/srs?secret=__HOOK_SECRET__;
     }
 }

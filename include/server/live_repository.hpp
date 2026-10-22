@@ -8,7 +8,7 @@ public:
     explicit LiveRepository(boost::mysql::tcp_connection& connection) : connection_(connection) {}
     // 幂等创建直播与历史卡片；每位发布者最多一场未结束直播。
     boost::asio::awaitable<nlohmann::json> create(int actor, Conversation conversation,
-        std::string client_id, std::string title, std::string id);
+        std::string client_id, std::string title, std::string id, std::string transport);
     // 检查会话访问权限；owner_only 另要求为发布者。
     boost::asio::awaitable<nlohmann::json> access(int actor, Conversation conversation,
         std::string id, bool owner_only = false);

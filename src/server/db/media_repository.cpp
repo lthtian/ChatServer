@@ -56,7 +56,7 @@ const std::string kMessageSelect =
     "CAST(UNIX_TIMESTAMP(h.time)*1000 AS UNSIGNED),h.client_msg_id,"
     "m.media_id,m.mime,m.actual_bytes,m.width,m.height,m.thumbnail_mime,"
     "m.thumbnail_bytes,m.thumbnail_width,m.thumbnail_height,h.conversation_seq,m.name,m.sha256 "
-    ",l.live_id,l.owner_id,l.title,l.state "
+    ",l.live_id,l.owner_id,l.title,l.state,l.transport "
     "FROM History h JOIN User u ON u.id=h.userid LEFT JOIN Media m ON m.media_id=h.media_id "
     "LEFT JOIN LiveSession l ON l.live_id=h.live_id ";
 
@@ -80,7 +80,7 @@ json Message(mysql::row_view row) {
     }
     if (!row[19].is_null())
         message["live"] = {{"live_id", Value(row[19])}, {"owner_id", Value(row[20])},
-            {"title", Value(row[21])}, {"state", Value(row[22])}};
+            {"title", Value(row[21])}, {"state", Value(row[22])}, {"transport", Value(row[23])}};
     return message;
 }
 }  // namespace

@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <regex>
 #include <unordered_set>
 
@@ -38,9 +39,12 @@ LiveService::LiveService(asio::any_io_executor executor) : acceptor_(executor), 
     url_ = Env("CHAT_LIVE_URL");
     if (url_.empty()) return;
     rtmp_url_ = Env("CHAT_LIVE_RTMP_URL");
+    rtc_url_ = Env("CHAT_LIVE_RTC_URL");
     secret_ = Env("CHAT_LIVE_HOOK_SECRET");
     if (!std::regex_match(secret_, std::regex("[0-9a-f]{64}")) || !rtmp_url_.starts_with("rtmp://") ||
         !url_.starts_with("http://") || url_.ends_with('/') || rtmp_url_.ends_with('/'))
+        throw MediaError("invalid_live_configuration");
+    if (!rtc_url_.empty() && (!rtc_url_.starts_with("http://") || !rtc_url_.ends_with("/rtc")))
         throw MediaError("invalid_live_configuration");
     api_port_ = static_cast<unsigned short>(std::stoi(Env("CHAT_LIVE_API_PORT", "1985")));
     const auto port = static_cast<unsigned short>(std::stoi(Env("CHAT_LIVE_PORT", "6003")));
@@ -70,9 +74,12 @@ json LiveService::descriptor(int actor, const Session::Ptr& session, Conversatio
     std::erase_if(tickets_, [now](const auto& item) { return item.second.deadline <= now; });
     if (tickets_.size() >= 1024) throw MediaError("busy");
     const auto token = Random(32);
-    tickets_.emplace(token, Ticket{actor, session, conversation, id, publish, now + std::chrono::minutes(5)});
+    tickets_.emplace(token, Ticket{actor, session, conversation, id, publish, now + std::chrono::minutes(5), format == "webrtc"});
     const auto expires = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count() + 300000;
+    if (format == "webrtc") return {{"method", "POST"},
+        {"url", rtc_url_ + (publish ? "/publish/" : "/play/") + id},
+        {"headers", {{"Authorization", "Bearer " + token}}}, {"expires_at", expires}};
     if (publish) return {{"server", rtmp_url_}, {"key", id + "?token=" + token},
         {"url", rtmp_url_ + "/" + id + "?token=" + token}, {"expires_at", expires}};
     return {{"method", "GET"}, {"url", url_ + "/" + id + (format == "hls" ? ".m3u8" : ".flv")},
@@ -99,7 +106,9 @@ asio::awaitable<json> LiveService::request(int actor, Session::Ptr session, json
         if (!guard->valid()) throw MediaError("unavailable");
         LiveRepository repository(guard->connection());
         if (op == "live_create") {
-            result = co_await repository.create(actor, conversation, input.at("client_msg_id"), input.at("title"), Random(16));
+            const auto transport = input.value("transport", "rtmp");
+            if (transport == "webrtc" && rtc_url_.empty()) throw MediaError("rtc_unavailable");
+            result = co_await repository.create(actor, conversation, input.at("client_msg_id"), input.at("title"), Random(16), transport);
         } else {
             const auto id = input.at("live_id").get<std::string>();
             if (op == "live_end") result["live"] = co_await repository.end(actor, conversation, id);
@@ -110,12 +119,14 @@ asio::awaitable<json> LiveService::request(int actor, Session::Ptr session, json
     const auto id = live.at("live_id").get<std::string>();
     if (op == "live_create" || op == "live_publish") {
         if (live["state"] == "ended") throw MediaError("live_ended");
-        result["publish"] = descriptor(actor, session, conversation, id, true, "");
+        if (live["transport"] == "webrtc" && rtc_url_.empty()) throw MediaError("rtc_unavailable");
+        result["publish"] = descriptor(actor, session, conversation, id, true, live["transport"]);
     } else if (op == "live_read") {
         if (live["state"] == "ended") throw MediaError("live_ended");
         if (live["state"] != "live") throw MediaError("live_not_ready");
         const auto format = input.value("format", "flv");
-        if (format != "flv" && format != "hls") throw MediaError("invalid_argument");
+        if (live["transport"] == "webrtc" ? (format != "webrtc" || rtc_url_.empty())
+            : (format != "flv" && format != "hls")) throw MediaError("invalid_argument");
         result["format"] = format;
         result["download"] = descriptor(actor, session, conversation, id, false, format);
     } else if (op == "live_end") {
@@ -133,6 +144,7 @@ asio::awaitable<json> LiveService::request(int actor, Session::Ptr session, json
 asio::awaitable<void> LiveService::authorize(std::string authorization, std::string path) {
     if (!authorization.starts_with("Bearer ")) throw MediaError("unauthorized");
     const auto access = ticket(authorization.substr(7), false);
+    if (access.rtc) throw MediaError("forbidden");
     // 固定资源形状，禁止跳目录、任意扩展名或其他流；查询字符串不作为磁盘路径。
     const std::regex allowed("/live/" + access.id + "(?:\\.flv|\\.m3u8|-[0-9]+\\.ts)");
     if (!std::regex_match(path, allowed)) throw MediaError("forbidden");
@@ -145,23 +157,39 @@ asio::awaitable<void> LiveService::authorize(std::string authorization, std::str
 
 asio::awaitable<void> LiveService::hook(json input) {
     const auto id = input.at("stream").get<std::string>();
-    if (input.at("app") != "live") throw MediaError("forbidden");
+    if (!std::regex_match(id, std::regex("[0-9a-f]{32}"))) throw MediaError("invalid_argument");
+    const bool rtc = input.at("app") == "camera";
+    if (!rtc && input.at("app") != "live") throw MediaError("forbidden");
     const auto action = input.at("action").get<std::string>();
+    // HTTP-FLV 的播放权限由 Nginx 检查；camera 的媒体连接由 RTC 信令入口检查。
+    if (!rtc && (action == "on_play" || action == "on_stop")) co_return;
     json live;
     {
         auto guard = co_await AsyncConnectionGuard::create();
         if (!guard->valid()) throw MediaError("unavailable");
         LiveRepository repository(guard->connection());
-        if (action == "on_publish") {
+        if (action == "on_publish" || (rtc && action == "on_play")) {
             std::smatch match;
             const auto param = input.value("param", "");
-            if (!std::regex_match(param, match, std::regex("\\?token=([0-9a-f]{64})"))) throw MediaError("unauthorized");
-            const auto access = ticket(match[1], true);
-            if (access.id != id) throw MediaError("forbidden");
-            co_await repository.access(access.actor, access.conversation, id, true);
-            live = co_await repository.published(id, input.at("client_id"));
+            // SRS 的 HTTP query 不带问号；RTMP stream 参数保留前导问号。
+            const auto pattern = rtc ? "app=camera&stream=" + id + "&token=([0-9a-f]{64})"
+                                     : "\\?token=([0-9a-f]{64})";
+            if (!std::regex_match(param, match, std::regex(pattern))) throw MediaError("unauthorized");
+            const bool publishing = action == "on_publish";
+            const auto token = match[1].str();
+            const auto access = ticket(token, publishing);
+            if (access.id != id || access.rtc != rtc || (rtc && !rtc_opening_.contains(token))) throw MediaError("forbidden");
+            live = co_await repository.access(access.actor, access.conversation, id, publishing);
+            if (live["transport"] != (rtc ? "webrtc" : "rtmp") || live["state"] == "ended") throw MediaError("forbidden");
+            if (rtc) rtc_clients_[token] = input.at("client_id");
+            if (publishing) live = co_await repository.published(id, input.at("client_id"));
+            else co_return;
         } else if (action == "on_unpublish") {
             live = co_await repository.unpublished(id, input.at("client_id"));
+        } else if (rtc && action == "on_stop") {
+            const auto client = input.at("client_id").get<std::string>();
+            std::erase_if(rtc_connections_, [&](const auto& item) { return item.second.client == client; });
+            co_return;
         } else throw MediaError("invalid_argument");
     }
     if (notify_) co_await notify_(live);
@@ -182,15 +210,18 @@ asio::awaitable<void> LiveService::serve(tcp::socket socket) {
     beast::tcp_stream stream(std::move(socket));
     http::status status = http::status::forbidden;
     std::string body = "1";
+    std::optional<http::response<http::string_body>> rtc_response;
     try {
         beast::flat_buffer buffer;
         http::request_parser<http::string_body> parser;
         parser.header_limit(8192);
-        parser.body_limit(16384);
+        parser.body_limit(65536);
         stream.expires_after(std::chrono::seconds(10));
         co_await http::async_read(stream, buffer, parser, asio::use_awaitable);
         const auto& request = parser.get();
-        if (request.method() == http::verb::post && request.target() == "/srs?secret=" + secret_) {
+        if (std::string(request.target()).starts_with("/rtc/")) {
+            rtc_response = co_await rtc_request(request);
+        } else if (request.method() == http::verb::post && request.target() == "/srs?secret=" + secret_) {
             co_await hook(json::parse(request.body()));
             body = "0";
         } else if (request.method() == http::verb::get && request.target() == "/authorize") {
@@ -201,10 +232,12 @@ asio::awaitable<void> LiveService::serve(tcp::socket socket) {
     } catch (const std::exception&) {
         // 内部鉴权失败不回显票据或回调正文。
     }
-    http::response<http::string_body> response(status, 11);
-    response.set(http::field::content_type, "application/json");
+    auto response = rtc_response ? std::move(*rtc_response) : http::response<http::string_body>(status, 11);
+    if (!rtc_response) {
+        response.set(http::field::content_type, "application/json");
+        response.body() = body;
+    }
     response.keep_alive(false);
-    response.body() = body;
     response.prepare_payload();
     boost::system::error_code ignored;
     stream.expires_after(std::chrono::seconds(5));
@@ -231,6 +264,7 @@ asio::awaitable<json> LiveService::srs(std::string method, std::string path) {
 asio::awaitable<void> LiveService::monitor() {
     while (!stopping_) {
         try {
+            co_await prune_rtc();
             json records;
             {
                 auto guard = co_await AsyncConnectionGuard::create();
@@ -242,7 +276,7 @@ asio::awaitable<void> LiveService::monitor() {
             const auto streams = co_await srs("GET", "/api/v1/streams/");
             std::unordered_map<std::string, std::string> present;
             for (const auto& item : streams.at("streams"))
-                if (item.value("app", "") == "live" && item.at("publish").value("active", false))
+                if ((item.value("app", "") == "live" || item.value("app", "") == "camera") && item.at("publish").value("active", false))
                     present.emplace(item.at("name"), item.at("publish").at("cid"));
             for (auto live : records) {
                 const std::string id = live["live_id"];
