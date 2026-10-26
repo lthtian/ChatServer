@@ -9,6 +9,9 @@ namespace media {
 void Remux(const std::string& input_path, const std::string& output_path) {
   auto input = OpenInput(input_path);
   Output output(output_path);
+  const bool transport_stream = std::string(output.context()->oformat->name) == "mpegts";
+  int video_count = 0;
+  int audio_count = 0;
   // 输入轨道号不一定等于输出轨道号；跳过字幕后尤其不能直接照搬编号。
   std::vector<AVStream*> mapping(input->nb_streams, nullptr);
   for (unsigned int i = 0; i < input->nb_streams; ++i) {
@@ -16,6 +19,11 @@ void Remux(const std::string& input_path, const std::string& output_path) {
     const auto type = source->codecpar->codec_type;
     if (type != AVMEDIA_TYPE_VIDEO && type != AVMEDIA_TYPE_AUDIO) continue;
     if (source->disposition & AV_DISPOSITION_ATTACHED_PIC) continue;
+    if (type == AVMEDIA_TYPE_VIDEO) ++video_count;
+    else ++audio_count;
+    if (transport_stream && ((type == AVMEDIA_TYPE_VIDEO && source->codecpar->codec_id != AV_CODEC_ID_H264) ||
+        (type == AVMEDIA_TYPE_AUDIO && source->codecpar->codec_id != AV_CODEC_ID_AAC)))
+      throw std::runtime_error("TS lesson accepts H.264 video and optional AAC audio only");
     // 为输入流创建输出流
     AVStream* target = output.AddStream();
     Check(avcodec_parameters_copy(target->codecpar, source->codecpar),
@@ -29,8 +37,12 @@ void Remux(const std::string& input_path, const std::string& output_path) {
     mapping[i] = target;
   }
   if (output.context()->nb_streams == 0) throw std::runtime_error("no audio/video streams");
+  if (transport_stream && (video_count != 1 || audio_count > 1))
+    throw std::runtime_error("TS lesson requires one video stream and at most one audio stream");
   Check(av_dict_copy(&output.context()->metadata, input->metadata, 0), "av_dict_copy");
   output.WriteHeader();
+  if (transport_stream)
+    std::cout << "ts video_bitstream=muxer-auto audio_framing=muxer-adts container_display_matrix=unsupported\n";
   auto packet = CreatePacket();
   int64_t packets = 0;
   while (true) {

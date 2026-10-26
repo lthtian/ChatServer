@@ -55,8 +55,10 @@ def main():
             config = config.replace(old, new)
         (root / 'srs.conf').write_text(config)
         nginx = (BASE / 'deploy/nginx-chat-live.conf').read_text().replace('127.0.0.1:6003', f'127.0.0.1:{auth}').replace('127.0.0.1:8080', f'127.0.0.1:{origin}')
+        # 只记录方法和状态，SDP、票据和会话资源路径均不进入实验日志。
+        nginx = nginx.replace('access_log off;', f'access_log {root}/rtc-methods.log rtc_methods;')
         (root / 'nginx.conf').write_text(f'pid {root}/nginx.pid; error_log {root}/nginx-error.log;\n'
-            f'events {{}}\nhttp {{ access_log off; client_body_temp_path {root}/body; proxy_temp_path {root}/proxy; '
+            f'events {{}}\nhttp {{ log_format rtc_methods "$request_method $status"; access_log off; client_body_temp_path {root}/body; proxy_temp_path {root}/proxy; '
             f'fastcgi_temp_path {root}/fastcgi; uwsgi_temp_path {root}/uwsgi; scgi_temp_path {root}/scgi; '
             f'server {{ listen {public}; {nginx} }} }}')
         os.environ.update(CHAT_LIVE_URL=f'http://127.0.0.1:{public}/live',
@@ -115,8 +117,15 @@ def main():
         assert not receiver.request('live_read', conversation=viewer_conversation, live_id=identifier, format='flv')['ok']
         viewer = launch('view', source(), 20000)
         assert viewer.wait(timeout=40) == 0, 'viewer failed; inspect view.log'
+        wait(lambda: len(json.loads(http(f'http://127.0.0.1:{api}/api/v1/clients/')[1])['clients']) == 1,
+             'viewer session DELETE removes only viewer')
         viewer = launch('window', source(), 20000)
         assert viewer.wait(timeout=40) == 0, 'window failed; inspect window.log'
+        wait(lambda: len(json.loads(http(f'http://127.0.0.1:{api}/api/v1/clients/')[1])['clients']) == 1,
+             'window session DELETE removes only viewer')
+        methods = (root / 'rtc-methods.log').read_text().splitlines()
+        assert methods.count('DELETE 204') >= 2, methods
+        print('PASS two viewer DELETE 204 responses; publisher remains connected', flush=True)
         history = receiver.request('history', conversation=viewer_conversation, limit=10)
         assert any(m.get('live', {}).get('transport') == 'webrtc' for m in history['data']['messages'])
         ended = sender.request('live_end', conversation=conversation, live_id=identifier)
@@ -148,6 +157,8 @@ def main():
             MediaServiceTest.doClassCleanups()
         for log in logs:
             log.close()
+        if (root / 'rtc-methods.log').exists():
+            (OUT / 'rtc-methods.log').write_text((root / 'rtc-methods.log').read_text())
         for name in ['publish.json', 'view.json', 'window.json', 'publish.json.stop', 'view.json.stop']:
             (OUT / name).unlink(missing_ok=True)
         # 临时 SRS 配置包含测试密钥，日志保留在独立输出目录。

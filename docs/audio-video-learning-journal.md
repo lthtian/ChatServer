@@ -420,3 +420,13 @@ tianmu_sama要求文档直接说明概念的本质和关系、真实链路及对
 tianmu_sama指出10.2偏向项目接口，不能支撑初学者理解知识关联，明确要求另建整体知识文档。已在唯一学习目录D:/chat_server/ChatServer/docs/音视频学习新增10-补充-RTP-RTCP-WebRTC知识体系.md，按媒体单位与RTP、RTCP反馈和时钟、SDP、ICE/STUN/TURN、DTLS/SRTP、WHIP/WHEP、媒体服务器与SRS回调、完整生命周期、凭据状态、库和应用职责组织，最后才对应项目代码。每部分说明数据是什么、交给谁处理、能通过代码调整什么，不用函数阅读路径代替基础知识。
 
 核对IETF正式规范、当前WHEP草案及SRS6官方说明和实际future_rtp代码：WHIP为RFC9725，WHEP截至2026-10-21仍是draft-ietf-wish-whep-05；SRS on_publish在当前WHIP返回Answer前参与鉴权，不证明ICE/DTLS或首帧成功；ChatServer只存业务会话关联，RTC握手状态在客户端库/SRS；SRS是独立媒体会话终点而非透明UDP转发。文内无外链，原10.1/10.2保留。仅进行技术内容、编码和Markdown静态核对。
+
+### 2026-10-23 RTC 与文件播放共用组件
+
+tianmu_sama授权把输入分流、解码转换和播放收敛的方案直接实施。目录核对发现E:/chat_server_qt/ChatClient现在是future_rtp且任务开始时干净；ChatClient-rtc已改为codex/media-reinforcement，有SAR/旋转/诊断改动。曾误以旧目录为本次基线并询问，用户纠正后只在ChatClient修改；不得把另一个worktree的实验内容带进future_rtp。
+
+新增player/media_types.h、TrackDecoder和Playback。TrackDecoder独立拥有单条轨道的FFmpeg解码/RGB/PCM资源；MediaDecoder保留AVFormat读取与seek，RtcConnection保留ICE/DTLS/RTP/RTCP及SR到公共时间映射。各输入各有实例，不跨线程共享解码上下文。MediaWindow和CameraWindow都使用GUI中的Playback管理队列、音频主时钟/单调备用时钟、缓冲和画面投放，未创建通用网络框架。删除重复CameraDecoder，发布CameraEncoder保持职责，麦克风线程保持原实现。Windows新C++带BOM，原文件编码保留，不加版权或ABOUTME头。
+
+回归真实MP4带B帧240帧/375PCM块、首帧独立CLI RGB误差0；真实H264/Opus编码→公共解码30帧/49块；暂停/seek/连续重新打开/尾部排空通过。复现并修正直播初批积压仍从旧位置计时、断粮冻结后不追赶这两个公共调度分支，对应最终断言通过。当前输出设备0，因此没有有声播放验收；没有采集相机/麦克风，也没有本次公网SRS网络回归，不能说端到端已测。ChatClient Debug/MinGW x64最终21.279938秒Full build passed，2026-10-23 20:12:07，39,260,208字节，PE8664，SHA256 9656F61639B14259C74FBDB35E3E3FB6EC0762D1E61EEB671BC2DEC2D9B5C876。主客户端未启动，未部署。
+
+知识仅同步D:/chat_server/ChatServer/docs/音视频学习的10.2和独立知识体系，更新公共组件与两条输入链路；项目README同步。详细构建命令和验证记录放E:/chat_server_qt/ChatClient/build/rtc-refactor/verification.txt。git diff --check正常配置退出0；不得用core.autocrlf=false生成CRLF伪全文件diff后误改换行。无Git写操作。

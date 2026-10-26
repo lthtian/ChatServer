@@ -1,6 +1,7 @@
 ﻿
 #include <cerrno>
 #include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <iomanip>
@@ -22,6 +23,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
+#include <libavutil/display.h>
 #include <libavutil/pixdesc.h>
 #include <libswscale/swscale.h>
 }
@@ -53,6 +55,72 @@ std::string Seconds(int64_t value, AVRational time_base) {
 }
 
 using FramePtr = std::unique_ptr<AVFrame, void (*)(AVFrame*)>;
+
+const char* KnownName(const char* value) { return value ? value : "unknown"; }
+
+std::string Ratio(AVRational value) {
+  return value.num > 0 && value.den > 0
+      ? std::to_string(value.num) + "/" + std::to_string(value.den) : "unknown";
+}
+
+// 注册了解码实现只表示具备尝试能力；实际 profile、位深和损坏数据仍需打开及解码验证。
+void PrintProperties(AVFormatContext* input, AVStream* stream) {
+  const auto* parameters = stream->codecpar;
+  const auto* decoder = avcodec_find_decoder(parameters->codec_id);
+  std::cout << "properties stream=" << stream->index
+            << " decoder=" << (decoder ? decoder->name : "unavailable")
+            << " profile=" << std::quoted(KnownName(avcodec_profile_name(parameters->codec_id, parameters->profile)))
+            << " level=" << (parameters->level >= 0 ? std::to_string(parameters->level) : "unknown")
+            << " extradata_bytes=" << parameters->extradata_size
+            << " start_s=" << Seconds(stream->start_time, stream->time_base)
+            << " duration_s=" << Seconds(stream->duration, stream->time_base)
+            << " default=" << ((stream->disposition & AV_DISPOSITION_DEFAULT) ? "yes" : "no")
+            << " attached_picture=" << ((stream->disposition & AV_DISPOSITION_ATTACHED_PIC) ? "yes" : "no");
+  const auto* language = av_dict_get(stream->metadata, "language", nullptr, 0);
+  std::cout << " language=" << std::quoted(language ? language->value : "unknown") << '\n';
+  if (parameters->codec_type == AVMEDIA_TYPE_AUDIO) {
+    char layout[128] = {};
+    CheckResult(av_channel_layout_describe(&parameters->ch_layout, layout, sizeof(layout)),
+                "av_channel_layout_describe");
+    std::cout << "audio_properties stream=" << stream->index
+              << " sample_format=" << KnownName(av_get_sample_fmt_name(static_cast<AVSampleFormat>(parameters->format)))
+              << " channel_layout=" << std::quoted(layout)
+              << " initial_padding_samples=" << parameters->initial_padding << '\n';
+    return;
+  }
+  if (parameters->codec_type != AVMEDIA_TYPE_VIDEO) return;
+  // 容器、码流与解码帧可能分别提供 SAR；这里同时展示声明值和 FFmpeg 的流级推断值。
+  const AVRational sar = av_guess_sample_aspect_ratio(input, stream, nullptr);
+  std::cout << "video_properties stream=" << stream->index
+            << " pixel_format=" << KnownName(av_get_pix_fmt_name(static_cast<AVPixelFormat>(parameters->format)))
+            << " stream_sar=" << Ratio(stream->sample_aspect_ratio)
+            << " codec_sar=" << Ratio(parameters->sample_aspect_ratio)
+            << " guessed_sar=" << Ratio(sar)
+            << " unrotated_dar=" << (parameters->width > 0 && parameters->height > 0
+                ? Ratio(av_mul_q(sar, AVRational{parameters->width, parameters->height})) : "unknown")
+            << " color_range=" << KnownName(av_color_range_name(parameters->color_range))
+            << " color_space=" << KnownName(av_color_space_name(parameters->color_space))
+            << " color_primaries=" << KnownName(av_color_primaries_name(parameters->color_primaries))
+            << " color_transfer=" << KnownName(av_color_transfer_name(parameters->color_trc))
+            << " chroma_location=" << KnownName(av_chroma_location_name(parameters->chroma_location)) << '\n';
+  const auto* side = av_packet_side_data_get(parameters->coded_side_data,
+      parameters->nb_coded_side_data, AV_PKT_DATA_DISPLAYMATRIX);
+  std::cout << "display_matrix stream=" << stream->index;
+  if (!side) {
+    std::cout << " present=no\n";
+    return;
+  }
+  if (side->size < 9 * sizeof(int32_t)) throw std::runtime_error("incomplete display matrix");
+  const auto* matrix = reinterpret_cast<const int32_t*>(side->data);
+  const double rotation = av_display_rotation_get(matrix);
+  std::cout << " present=yes rotation_ccw_degrees=";
+  if (std::isfinite(rotation)) std::cout << rotation;
+  else std::cout << "unknown";
+  // 角度不能表达镜像、平移和投影；保留九个原始元素用于完整判断。
+  std::cout << " values=";
+  for (int index = 0; index < 9; ++index) std::cout << (index ? "," : "") << matrix[index];
+  std::cout << '\n';
+}
 
 FramePtr CreateFrame() {
   FramePtr frame(av_frame_alloc(),
@@ -274,7 +342,7 @@ void Inspect(const std::string& filename, int packet_limit,
   bool has_audio = false;
   const AVStream* video_stream = nullptr;
   for (unsigned int index = 0; index < input->nb_streams; ++index) {
-    const AVStream* stream = input->streams[index];
+    AVStream* stream = input->streams[index];
     const AVCodecParameters* parameters = stream->codecpar;
     const char* type = av_get_media_type_string(parameters->codec_type);
     std::cout << "stream index=" << stream->index
@@ -283,8 +351,8 @@ void Inspect(const std::string& filename, int packet_limit,
               << " time_base=" << stream->time_base.num << '/'
               << stream->time_base.den;
     if (parameters->codec_type == AVMEDIA_TYPE_VIDEO) {
-      // 本示例选择遇到的第一条视频流，其索引不一定为 0。
-      if (!video_stream) {
+      // 封面图片也可能被描述为视频轨道；解码演示选择第一条普通视频。
+      if (!video_stream && !(stream->disposition & AV_DISPOSITION_ATTACHED_PIC)) {
         video_stream = stream;
       }
       std::cout << " width=" << parameters->width
@@ -297,6 +365,7 @@ void Inspect(const std::string& filename, int packet_limit,
                 << " channels=" << parameters->ch_layout.nb_channels;
     }
     std::cout << '\n';
+    PrintProperties(input.get(), stream);
   }
   // 无音轨是输入文件的一种正常情况。
   std::cout << "audio present=" << (has_audio ? "yes" : "no") << '\n';

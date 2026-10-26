@@ -9,10 +9,15 @@
 ```powershell
 .\build\media_process.exe remux ..\video_player\samples\sintel_trailer.mp4 .\build\sintel_faststart.mp4
 .\build\media_process.exe remux ..\video_player\samples\sintel_trailer.mp4 .\build\sintel.mkv
+.\build\media_process.exe remux ..\video_player\samples\sintel_trailer.mp4 .\build\sintel.ts
 .\build\media_process.exe transcode ..\video_player\samples\sintel_trailer.mp4 .\build\sintel
 ```
 
 `transcode` 串行生成 `480p.mp4`、`360p.mp4`，不覆盖原件。已有实验产物在 `build/results`，可直接用第五阶段 `lessons/video_player/build/media_player.exe` 或聊天客户端的本地播放器打开。
+
+普通转码可选 `--gop-seconds 1..10`、`--b-frames 0..8`、`--crf 1..51`、`--max-rate-kbps 64..20000`。CRF 0 的无损模式与当前 VBV 约束不兼容，因此拒绝。GOP 秒数按名义帧率换算帧数，VFR 不保证等长媒体时间。HLS 不接受这些实验参数，保持各档共同两秒 IDR 边界。
+
+TS 转封装只接受一条 H.264 普通视频与至多一条 AAC 音轨；封装器自动完成需要的 Annex B/ADTS 适配，不另外叠加同一 BSF。TS 输出不提供容器显示矩阵的交付契约，也不保证保留 AAC 首尾无缝裁剪语义。真实对照素材、运行入口与结果见 `lessons/media_reinforcement/README.md`。
 
 输入可用无音轨的 `D:/test_video.mp4` 和有音轨的 Sintel。转码选第一条普通视频与第一条音轨，输入高度至少 480，输出 H.264 YUV420P；有声音则转为 AAC、48 kHz、双声道。旋转校正、HDR、去隔行、动态格式变化及音频时间线修复不属于此工具范围。转封装仅保留普通音视频轨道，目标容器须支持原编码。
 

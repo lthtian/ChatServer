@@ -116,8 +116,11 @@ void TrackTranscoder::ConfigureVideo(AVFormatContext* input, const Rendition& re
   encoder_->color_primaries = decoder_->color_primaries;
   encoder_->color_trc = decoder_->color_trc;
   encoder_->chroma_sample_location = decoder_->chroma_sample_location;
-  encoder_->gop_size = std::max(1, static_cast<int>(std::lround(av_q2d(encoder_->framerate) * 2)));
-  encoder_->max_b_frames = 2;
+  if (av_q2d(encoder_->framerate) > 1000)
+    throw std::runtime_error("nominal frame rate exceeds the lesson limit");
+  encoder_->gop_size = std::max(1, static_cast<int>(std::lround(
+      av_q2d(encoder_->framerate) * rendition.gop_seconds)));
+  encoder_->max_b_frames = rendition.b_frames;
   align_segments_ = rendition.align_segments;
   if (align_segments_) {
     // VFR 也按时间切片，固定帧数 GOP 不再提前插入切点。
@@ -127,11 +130,13 @@ void TrackTranscoder::ConfigureVideo(AVFormatContext* input, const Rendition& re
   encoder_->rc_max_rate = rendition.max_video_rate;
   encoder_->rc_buffer_size = rendition.max_video_rate * 2;
   Check(av_opt_set(encoder_->priv_data, "preset", "veryfast", 0), "set preset");
-  Check(av_opt_set(encoder_->priv_data, "crf", "23", 0), "set crf");
+  Check(av_opt_set_int(encoder_->priv_data, "crf", rendition.crf, 0), "set crf");
   Check(av_opt_set(encoder_->priv_data, "x264-params", "scenecut=0:open-gop=0", 0), "set GOP");
   std::cout << "video size=" << encoder_->width << 'x' << encoder_->height
-            << " pixel_format=yuv420p crf=23 preset=veryfast max_rate="
-            << rendition.max_video_rate << " gop_frames=" << encoder_->gop_size << '\n';
+            << " pixel_format=yuv420p crf=" << rendition.crf << " preset=veryfast max_rate="
+            << rendition.max_video_rate << " gop_frames=" << encoder_->gop_size
+            << " max_b_frames=" << rendition.b_frames
+            << " keyframe_policy=" << (align_segments_ ? "aligned-2-seconds" : "nominal-frame-count") << '\n';
 }
 
 void TrackTranscoder::ConfigureAudio(const Rendition& rendition) {
@@ -337,12 +342,23 @@ void TrackTranscoder::Finish() {
             << " encoded_packets=" << packet_count_ << " audio_samples=" << sample_count_ << '\n';
 }
 
-void TranscodeRenditions(const std::string& input_path, const std::string& directory) {
+void TranscodeRenditions(const std::string& input_path, const std::string& directory,
+                        const TranscodeOptions& options) {
+  if (options.gop_seconds < 1 || options.gop_seconds > 10 || options.b_frames < 0 ||
+      options.b_frames > 8 || options.crf < 1 || options.crf > 51 ||
+      (options.max_video_rate != 0 && (options.max_video_rate < 64000 || options.max_video_rate > 20000000)))
+    throw std::runtime_error("transcode options exceed the lesson limits (CRF must be 1..51; lossless ignores VBV)");
   if (!QFileInfo(QString::fromStdString(input_path)).isFile())
     throw std::runtime_error("input file does not exist");
   const QDir folder(QString::fromStdString(directory));
   if (!folder.mkpath(".")) throw std::runtime_error("cannot create output directory");
-  const Rendition renditions[] = {{480, 1200000, 128000}, {360, 700000, 96000}};
+  Rendition renditions[] = {{480, 1200000, 128000}, {360, 700000, 96000}};
+  for (auto& rendition : renditions) {
+    rendition.gop_seconds = options.gop_seconds;
+    rendition.b_frames = options.b_frames;
+    rendition.crf = options.crf;
+    if (options.max_video_rate) rendition.max_video_rate = options.max_video_rate;
+  }
   for (const auto& rendition : renditions) {
     const auto path = folder.filePath(QString::number(rendition.height) + "p.mp4");
     if (QFileInfo::exists(path) || QFileInfo::exists(path + ".part"))

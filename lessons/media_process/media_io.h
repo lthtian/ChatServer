@@ -25,7 +25,7 @@ PacketPtr CreatePacket();  // 分配包对象，尚无编码数据。
 // 管理输出容器、磁盘 I/O 和半成品；轨道必须在 WriteHeader 前配置完成。
 class Output {
  public:
-  explicit Output(const std::string& path);  // 支持 .mp4/.mkv，拒绝覆盖已有文件。
+  explicit Output(const std::string& path);  // 支持 .mp4/.mkv/.ts，拒绝覆盖已有文件。
   ~Output();  // 关闭 I/O；未完成的本次输出按尽力方式清理。
   Output(const Output&) = delete;
   Output& operator=(const Output&) = delete;
@@ -47,6 +47,13 @@ class Output {
 void Remux(const std::string& input_path, const std::string& output_path);
 
 // 串行产生两个 MP4：480p 和 360p；有音轨时转为 AAC 48 kHz 双声道。
-void TranscodeRenditions(const std::string& input_path, const std::string& directory);
+struct TranscodeOptions {
+  int gop_seconds = 2;  // 名义帧率换算出的最大 GOP 帧数；VFR 不保证等长时间分片。
+  int b_frames = 2;  // 编码器允许的连续 B 帧上限。
+  int crf = 23;  // H.264 质量参数；与 VBV 最大码率共同约束编码。
+  int max_video_rate = 0;  // bit/s；0 使用各档默认上限。
+};
+void TranscodeRenditions(const std::string& input_path, const std::string& directory,
+                        const TranscodeOptions& options = {});
 
 }  // namespace media

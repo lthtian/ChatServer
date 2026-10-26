@@ -16,6 +16,9 @@ struct Rendition {
   int max_video_rate;  // H.264 VBV 最大码率，bit/s。
   int audio_rate;  // AAC 目标码率，bit/s；不是采样率。
   bool align_segments = false;  // HLS 在共同的两秒边界强制 IDR。
+  int gop_seconds = 2;  // 普通转码使用名义帧率换算帧数；HLS 独立按时间强制 IDR。
+  int b_frames = 2;  // 连续 B 帧上限，不等于每个 GOP 的实际 B 帧数量。
+  int crf = 23;  // 数值越小通常质量越高；VBV 仍可能限制瞬时码率。
 };
 
 void TranscodeFile(const std::string& path, const std::string& destination,

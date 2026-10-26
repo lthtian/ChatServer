@@ -60,14 +60,17 @@ Output::Output(const std::string& path)
       QFileInfo::exists(QString::fromStdString(temporary_path_)))
     throw std::runtime_error("output or .part file already exists: " + path_);
   const auto extension = QFileInfo(QString::fromStdString(path_)).suffix().toLower();
-  const char* format = extension == "mp4" ? "mp4" : extension == "mkv" ? "matroska" : nullptr;
-  if (!format) throw std::runtime_error("output extension must be .mp4 or .mkv");
+  const char* format = extension == "mp4" ? "mp4" : extension == "mkv" ? "matroska"
+      : extension == "ts" ? "mpegts" : nullptr;
+  if (!format) throw std::runtime_error("output extension must be .mp4, .mkv or .ts");
   AVFormatContext* raw = nullptr;
   const int result = avformat_alloc_output_context2(&raw, nullptr, format,
                                                   temporary_path_.c_str());
   context_.reset(raw);
   Check(result, "avformat_alloc_output_context2");
   if (!context_) throw std::bad_alloc();
+  // MPEG-TS 封装器按实际包格式自动接入 h264_mp4toannexb；调用方不再叠加同一 BSF。
+  context_->flags |= AVFMT_FLAG_AUTO_BSF;
 }
 
 Output::~Output() {
