@@ -46,6 +46,9 @@ class Output {
 // 复制音视频编码包，不创建解码器和编码器；忽略字幕、附件等其他轨道。
 void Remux(const std::string& input_path, const std::string& output_path);
 
+// 探测受支持的独立文件容器，将轨道声明保存为 JSON；不代表全文件解码成功。
+void Probe(const std::string& input_path, const std::string& output_path);
+
 // 串行产生两个 MP4：480p 和 360p；有音轨时转为 AAC 48 kHz 双声道。
 struct TranscodeOptions {
   int gop_seconds = 2;  // 名义帧率换算出的最大 GOP 帧数；VFR 不保证等长时间分片。

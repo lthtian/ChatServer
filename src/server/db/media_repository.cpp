@@ -164,16 +164,15 @@ asio::awaitable<void> MediaRepository::ready(int actor, std::string media_id,
     if (result.affected_rows() != 1) throw MediaError("state_conflict");
 }
 
-asio::awaitable<void> MediaRepository::ready_file(int actor, std::string media_id, std::uint64_t actual_bytes) {
-    co_await Transaction(connection_, [&, actor, actual_bytes]() -> asio::awaitable<json> {
+asio::awaitable<void> MediaRepository::ready_file(int actor, std::string media_id, std::uint64_t actual_bytes, bool hls) {
+    co_await Transaction(connection_, [&, actor, actual_bytes, hls]() -> asio::awaitable<json> {
     const auto result = co_await Execute(connection_,
         "UPDATE Media SET state='ready',actual_bytes=?,mime='application/octet-stream' "
         "WHERE owner_id=? AND media_id=? AND kind='file' AND state='processing' AND expected_bytes=? "
         "AND expires_at>CURRENT_TIMESTAMP(6)", actual_bytes, actor, media_id, actual_bytes);
     if (result.affected_rows() != 1) throw MediaError("state_conflict");
     // 这里想数据库投递HLS处理任务
-    co_await Execute(connection_, "INSERT INTO MediaJob(media_id) SELECT media_id FROM Media "
-        "WHERE media_id=? AND LOWER(RIGHT(name,4))='.mp4'", media_id);
+    if (hls) co_await Execute(connection_, "INSERT INTO MediaJob(media_id) VALUES(?)", media_id);
     co_return json::object();
     });
 }

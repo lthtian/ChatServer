@@ -1,6 +1,7 @@
 ﻿#include "media_service.hpp"
 #include "async_connectionpool.hpp"
 #include "chatservice.hpp"
+#include "media_description.h"
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <algorithm>
@@ -130,6 +131,7 @@ asio::awaitable<void> MediaService::collect() {
                 if (media["state"] != "canceled" && media["expired"] == 0) continue;
                 co_await asio::co_spawn(workers_, Work<bool>([this, id] {
                     store_.Remove(id + "/original"); store_.Remove(id + "/thumbnail");
+                    store_.Remove(id + "/description"); store_.RemoveTree(id + "/inspection");
                     store_.RemoveTree(id + "/hls"); store_.RemoveTree(id + "/processing"); return true;
                 }), asio::use_awaitable);
                 co_await repository.purged(owner, id);
@@ -180,28 +182,39 @@ asio::awaitable<json> MediaService::request(int actor, Session::Ptr session, jso
     if (op == "read") {
         const auto conversation = ParseConversation(input.at("conversation"));
         const auto variant = input.at("variant").get<std::string>();
-        if (variant != "original" && variant != "thumbnail" && variant != "playback") throw MediaError("invalid_argument");
+        if (variant != "original" && variant != "thumbnail" && variant != "playback" && variant != "description")
+            throw MediaError("invalid_argument");
         const auto media = co_await repository.access(actor, conversation, input.at("media_id"));
+        const std::string id = media["media_id"], hash = media["sha256"];
+        json description;
+        if (media["kind"] == "file") description = co_await asio::co_spawn(workers_, Work<json>(
+            [this, id, hash] { return LoadDescription(store_, id, hash); }), asio::use_awaitable);
+        if (variant == "description") {
+            if (media["kind"] != "file") throw MediaError("invalid_argument");
+            co_return json{{"description", description}};
+        }
         if (variant == "playback") {
-            const auto id = media["media_id"].get<std::string>();
-            const auto hash = media["sha256"].get<std::string>();
+            if (media["kind"] != "file") throw MediaError("invalid_argument");
+            if (description.value("state", "") != "recognized")
+                co_return json{{"format", "unavailable"}, {"description", description}, {"hls_state", "not_applicable"}};
             const auto hls = co_await asio::co_spawn(workers_, Work<std::shared_ptr<const HlsCatalog>>(
                 [this, id, hash] { return LoadHls(store_, id, hash); }), asio::use_awaitable);
-            auto state = hls ? std::string("ready") : co_await asio::co_spawn(workers_, Work<std::string>(
-                [this, id] { return HlsState(store_, id); }), asio::use_awaitable);
             const auto job = co_await repository.job_status(id);
-            if (!hls && !job.empty()) state = job.at("state").get<std::string>();
-            co_return json{{"format", hls ? "hls" : "mp4"}, {"hls_state", state},
+            const auto state = hls ? "ready" : job.empty() ? "not_applicable" :
+                job.at("state").get<std::string>() == "ready" ? "failed" : job.at("state").get<std::string>();
+            co_return json{{"format", hls ? "hls" : "original"}, {"hls_state", state}, {"description", description},
                 {"hls_failure", job.value("failure_code", json(nullptr))},
                 {"variants", hls ? hls->variants : json::array()},
                 {"download", descriptor({actor, session, conversation, id, "original", false, deadline, hls})}};
         }
         if (media["kind"] == "file" && variant != "original") throw MediaError("invalid_argument");
         const bool original = variant == "original";
-        co_return json{{"download", descriptor({actor, session, conversation, media["media_id"], variant, false, deadline})},
+        json result{{"download", descriptor({actor, session, conversation, media["media_id"], variant, false, deadline})},
             {"bytes", media[original ? "actual_bytes" : "thumbnail_bytes"]},
             {"sha256", original ? media["sha256"] : json(nullptr)},
             {"mime", media[original ? "mime" : "thumbnail_mime"]}};
+        if (media["kind"] == "file") result["description"] = std::move(description);
+        co_return result;
     }
     if (op == "cancel") {
         const auto id = input.at("media_id").get<std::string>();
@@ -209,6 +222,7 @@ asio::awaitable<json> MediaService::request(int actor, Session::Ptr session, jso
         if (!active_.contains(id) && !jobs_.busy(id)) {
             co_await asio::co_spawn(workers_, Work<bool>([this, id] {
                 store_.Remove(id + "/original"); store_.Remove(id + "/thumbnail");
+                store_.Remove(id + "/description"); store_.RemoveTree(id + "/inspection");
                 store_.RemoveTree(id + "/hls"); store_.RemoveTree(id + "/processing"); return true;
             }), asio::use_awaitable);
         }
@@ -231,7 +245,8 @@ asio::awaitable<json> MediaService::request(int actor, Session::Ptr session, jso
                 Cleanup cleanup{[this, id] { active_.erase(id); }};
                 if (media["state"] != "ready") {
                     co_await asio::co_spawn(workers_, Work<bool>([this, id] {
-                        store_.Remove(id + "/original"); store_.Remove(id + "/thumbnail"); return true;
+                        store_.Remove(id + "/original"); store_.Remove(id + "/thumbnail");
+                        store_.Remove(id + "/description"); store_.RemoveTree(id + "/inspection"); return true;
                     }), asio::use_awaitable);
                 }
                 co_await repository.retry(actor, id);
@@ -241,7 +256,12 @@ asio::awaitable<json> MediaService::request(int actor, Session::Ptr session, jso
     } else throw MediaError("invalid_argument");
     json result = {{"media_id", media["media_id"]}, {"state", media["state"]},
         {"failure_code", media["failure_code"]}, {"expired", media["expired"]}};
-    if (media["kind"] == "file") result["hls_job"] = co_await repository.job_status(media["media_id"]);
+    if (media["kind"] == "file") {
+        result["hls_job"] = co_await repository.job_status(media["media_id"]);
+        const std::string id = media["media_id"], hash = media["sha256"];
+        result["description"] = co_await asio::co_spawn(workers_, Work<json>(
+            [this, id, hash] { return LoadDescription(store_, id, hash); }), asio::use_awaitable);
+    }
     if (media["state"] == "uploading" && media["expired"] == 0) {
         result["upload"] = descriptor({actor, session, {}, media["media_id"], "original", true, deadline});
     }
@@ -356,11 +376,18 @@ asio::awaitable<void> MediaService::upload(beast::tcp_stream& stream, beast::fla
             if (!co_await repository.start_processing(ticket.actor, id)) throw MediaError("state_conflict");
         }
         if (media["kind"] == "file") {
-            co_await asio::co_spawn(workers_, Work<bool>([upload] { upload->Commit(); return true; }), asio::use_awaitable);
+            const std::string hash = media["sha256"];
+            co_await asio::co_spawn(workers_, Work<bool>([this, upload, id, hash] {
+                upload->Commit();
+                SaveDescription(store_, id, hash, {{"state", "pending"}, {"failure", nullptr}});
+                return true;
+            }), asio::use_awaitable);
+            const auto description = co_await asio::co_spawn(probes_, Work<json>(
+                [this, id, hash] { return jobs_.probe(id, hash); }), asio::use_awaitable);
             auto guard = co_await AsyncConnectionGuard::create();
             if (!guard->valid()) throw MediaError("unavailable");
             MediaRepository repository(guard->connection());
-            co_await repository.ready_file(ticket.actor, id, media["expected_bytes"]);
+            co_await repository.ready_file(ticket.actor, id, media["expected_bytes"], NeedsHlsJob(description));
         } else {
         auto thumbnail = co_await asio::co_spawn(workers_, Work<Thumbnail>([this, upload, id] {
             upload->Commit();
@@ -380,7 +407,8 @@ asio::awaitable<void> MediaService::upload(beast::tcp_stream& stream, beast::fla
     if (failure) {
         try {
             co_await asio::co_spawn(workers_, Work<bool>([this, id] {
-                store_.Remove(id + "/original"); store_.Remove(id + "/thumbnail"); return true;
+                store_.Remove(id + "/original"); store_.Remove(id + "/thumbnail");
+                store_.Remove(id + "/description"); store_.RemoveTree(id + "/inspection"); return true;
             }), asio::use_awaitable);
             auto guard = co_await AsyncConnectionGuard::create();
             if (guard->valid()) {

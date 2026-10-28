@@ -2,6 +2,7 @@
 #include "async_connectionpool.hpp"
 #include "hls_catalog.hpp"
 #include "media_repository.hpp"
+#include "media_description.h"
 #include <openssl/evp.h>
 #include <array>
 #include <cerrno>
@@ -51,7 +52,7 @@ std::string Digest(const fs::path& path) {
 // argv 直接交给操作系统，不经过 shell；文件名无法变成命令。
 std::string Execute(const std::string& program, const std::string& source,
                     const std::string& output, const std::string& type,
-                    const std::string& log, const std::atomic<bool>& stopping) {
+                    const std::string& log, const std::atomic<bool>& stopping, const std::string& mode) {
     posix_spawn_file_actions_t files;
     posix_spawnattr_t attributes;
     posix_spawn_file_actions_init(&files);
@@ -66,28 +67,31 @@ std::string Execute(const std::string& program, const std::string& source,
     posix_spawnattr_setsigmask(&attributes, &mask);
     posix_spawnattr_setpgroup(&attributes, 0);
     posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK);
-    std::array<char*, 6> args{const_cast<char*>(program.c_str()), const_cast<char*>("hls"),
-        const_cast<char*>(source.c_str()), const_cast<char*>(output.c_str()), const_cast<char*>(type.c_str()), nullptr};
+    std::array<char*, 6> args{const_cast<char*>(program.c_str()), const_cast<char*>(mode.c_str()),
+        const_cast<char*>(source.c_str()), const_cast<char*>(output.c_str()),
+        mode == "hls" ? const_cast<char*>(type.c_str()) : nullptr, nullptr};
     pid_t pid = -1;
     if (!error) error = posix_spawn(&pid, program.c_str(), &files, &attributes, args.data(), environ);
     posix_spawnattr_destroy(&attributes);
     posix_spawn_file_actions_destroy(&files);
     if (error) return "processor_start_failed";
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(30);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(mode == "probe" ? 10 : 1800);
+    const auto failed = mode == "probe" ? "probe_failed" : "transcode_failed";
+    const auto timeout = mode == "probe" ? "probe_timeout" : "transcode_timeout";
     int status = 0;
     while (true) {
         const auto result = waitpid(pid, &status, WNOHANG);
-        if (result == pid) return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? "" : "transcode_failed";
+        if (result == pid) return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? "" : failed;
         if (result < 0 && errno != EINTR) return "processor_wait_failed";
         if (stopping || std::chrono::steady_clock::now() >= deadline) {
             kill(-pid, SIGTERM);
             for (int i = 0; i < 20; ++i) {
-                if (waitpid(pid, &status, WNOHANG) == pid) return stopping ? "interrupted" : "transcode_timeout";
+                if (waitpid(pid, &status, WNOHANG) == pid) return stopping ? "interrupted" : timeout;
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
             kill(-pid, SIGKILL);
             while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-            return stopping ? "interrupted" : "transcode_timeout";
+            return stopping ? "interrupted" : timeout;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
@@ -116,6 +120,29 @@ void MediaJobs::stop() {
     stopping_ = true;
     boost::system::error_code ignored;
     timer_.cancel(ignored);
+}
+
+json MediaJobs::probe(const std::string& id, const std::string& hash) {
+    const auto work = store_.Path(id + "/inspection");
+    json description;
+    try {
+        if (program_.empty()) throw MediaError("processor_not_configured");
+        if (stopping_) throw MediaError("interrupted");
+        fs::create_directories(work);
+        const auto output = work / "description.json";
+        const auto failure = Execute(program_, store_.Path(id + "/original").string(), output.string(), "",
+                                     (work / "probe.log").string(), stopping_, "probe");
+        if (!failure.empty()) throw MediaError(failure);
+        if (fs::is_symlink(output) || fs::file_size(output) > 65536) throw MediaError("invalid_description");
+        std::ifstream file(output);
+        description = json::parse(file);
+        SaveDescription(store_, id, hash, description);
+    } catch (const std::exception& error) {
+        description = {{"state", "failed"}, {"failure", error.what()}};
+        SaveDescription(store_, id, hash, description);
+    }
+    store_.RemoveTree(id + "/inspection");
+    return LoadDescription(store_, id, hash);
 }
 
 asio::awaitable<void> MediaJobs::run() {
@@ -180,7 +207,7 @@ std::string MediaJobs::process(const json& job) {
         fs::create_directory(work);
         fs::permissions(work, fs::perms::owner_all);
         const auto failure = Execute(program_, source.string(), (work / "bundle").string(),
-                                     segment_type_, (work / "processor.log").string(), stopping_);
+                                     segment_type_, (work / "processor.log").string(), stopping_, "hls");
         if (!failure.empty()) {
             fs::remove_all(work / "bundle");
             fs::remove_all(work / "bundle.part");

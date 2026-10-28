@@ -43,7 +43,7 @@ public:
     boost::asio::awaitable<bool> start_processing(int actor, std::string media_id);
     boost::asio::awaitable<void> ready(int actor, std::string media_id,
                                       Thumbnail thumbnail, std::uint64_t actual_bytes);
-    boost::asio::awaitable<void> ready_file(int actor, std::string media_id, std::uint64_t actual_bytes);
+    boost::asio::awaitable<void> ready_file(int actor, std::string media_id, std::uint64_t actual_bytes, bool hls);
     // 单机处理器启动时恢复中断任务；连续三次中断后保留失败状态供人工重试。
     boost::asio::awaitable<void> recover_jobs();
     // 在事务中领取一条就绪原件的任务，并增加执行次数；空对象表示暂无任务。

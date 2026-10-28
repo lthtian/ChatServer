@@ -61,22 +61,29 @@ class MediaJobsTest(MediaServiceTest):
         self.assertEqual(self.clients[0].request('status', media_id=media_id)['data']['hls_job']['attempts'], 1)
 
     def test_failure_and_retry(self):
-        content = b'not an MP4 file'
-        media_id = self.upload_video(content, 'invalid.mp4')
+        # 有效视频可读取原件，但 HDR 需要独立色彩管线，当前 HLS 处理器明确拒绝。
+        sample = pathlib.Path(self.directory.name) / 'hdr.mp4'
+        encoded = subprocess.run(['ffmpeg', '-v', 'error', '-nostdin', '-f', 'lavfi',
+            '-i', 'testsrc2=size=640x480:rate=10:duration=1', '-c:v', 'libx264',
+            '-color_trc', 'smpte2084', str(sample)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(encoded.returncode, 0, encoded.stderr)
+        self.assertEqual(encoded.stderr, '')
+        content = sample.read_bytes()
+        media_id = self.upload_video(content, 'hdr.mp4')
         failed = self.wait_state(media_id, {'failed'})
         self.assertEqual(failed['failure_code'], 'transcode_failed')
         fields = dict(conversation=dict(is_group=False, target=1), media_id=media_id)
         response = self.clients[1].request('read', variant='playback', **fields)['data']
         self.assertEqual(response['hls_state'], 'failed')
-        self.assertEqual(response['format'], 'mp4')
+        self.assertEqual(response['format'], 'original')
+        self.assertEqual(response['description']['state'], 'recognized')
         self.assertEqual(transfer(self.clients[1].request('read', variant='original', **fields)['data']['download']), content)
         self.assertFalse(self.clients[1].request('retry_hls', media_id=media_id)['ok'])
         self.assertTrue(self.clients[0].request('retry_hls', media_id=media_id)['ok'])
         self.wait_state(media_id, {'failed'})
         log = pathlib.Path(self.directory.name) / 'objects' / 'objects' / media_id / 'processing' / 'processor.log'
         diagnostic = log.read_text()
-        self.assertIn('avformat_open_input', diagnostic)
-        self.assertIn('Invalid data found when processing input', diagnostic)
+        self.assertIn('HDR input requires a separate color pipeline', diagnostic)
         self.assertFalse((pathlib.Path(self.directory.name) / 'objects' / 'objects' / media_id / 'hls' / 'catalog').exists())
 
     def test_restart_recovers_processing(self):

@@ -43,6 +43,7 @@ private:
     boost::asio::thread_pool workers_{1};
     DiskStore store_;
     MediaJobs jobs_;  // 独立于 HTTP 磁盘读写的持久媒体处理队列。
+    boost::asio::thread_pool probes_{1};  // 探测不阻塞文件下载，也不等待长时间转码。
     std::string url_;
     std::unordered_map<std::string, Ticket> tickets_;
     std::unordered_set<std::string> active_;

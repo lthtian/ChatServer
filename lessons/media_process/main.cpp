@@ -43,13 +43,19 @@ int main(int argc, char* argv[])
     if (argc < 4) {
       std::cerr << "usage: media_process remux input output.mp4|output.mkv|output.ts\n"
                 << "       media_process transcode input output-directory [--gop-seconds 1..10] [--b-frames 0..8] [--crf 1..51] [--max-rate-kbps 64..20000]\n"
-                << "       media_process hls input output-directory [ts|fmp4]\n";
+                << "       media_process hls input output-directory [ts|fmp4]\n"
+                << "       media_process probe input output.json\n";
       return 2;
     }
     av_log_set_level(AV_LOG_WARNING);
     const auto started = std::chrono::steady_clock::now();
     const std::string mode = Argument(argv[1]);
-    if (mode == "remux") {
+    if (mode == "probe") {
+      if (argc != 4) throw std::runtime_error("probe accepts input and output only");
+      // 探测失败写入结构化结果，避免将上传内容触发的诊断混入控制输出。
+      av_log_set_level(AV_LOG_QUIET);
+      media::Probe(Argument(argv[2]), Argument(argv[3]));
+    } else if (mode == "remux") {
       if (argc != 4) throw std::runtime_error("remux accepts input and output only");
       media::Remux(Argument(argv[2]), Argument(argv[3]));
     } else if (mode == "transcode") {
@@ -79,7 +85,7 @@ int main(int argc, char* argv[])
         throw std::runtime_error("hls accepts only an optional segment type: ts or fmp4");
       media::PackageHls(Argument(argv[2]), Argument(argv[3]), argc == 5 && Argument(argv[4]) == "fmp4");
     }
-    else throw std::runtime_error("mode must be remux, transcode or hls");
+    else throw std::runtime_error("mode must be probe, remux, transcode or hls");
     std::cout << "completed elapsed_s=" << std::chrono::duration<double>(
         std::chrono::steady_clock::now() - started).count() << '\n';
     return 0;

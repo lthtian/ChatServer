@@ -23,5 +23,15 @@ fi
 /usr/bin/time -v /usr/bin/cmake --build "$workspace/build" --target ChatServer --parallel 2
 mkdir -p "$output"
 cp "$workspace/source/bin/ChatServer" "$output/ChatServer"
-file "$output/ChatServer"
-sha256sum "$output/ChatServer"
+
+qt=${CHAT_BUILD_QT_PREFIX:-/opt/chat-build/deps/qt/usr}
+if [[ ! -s "$workspace/build-media-process/CMakeCache.txt" ]]; then
+    /usr/bin/cmake -S "$source/lessons/media_process" -B "$workspace/build-media-process" \
+        -DCMAKE_BUILD_TYPE=Release -DQt5_DIR="$qt/lib/x86_64-linux-gnu/cmake/Qt5" \
+        -DQt5Core_DIR="$qt/lib/x86_64-linux-gnu/cmake/Qt5Core"
+fi
+grep -Fx "CMAKE_HOME_DIRECTORY:INTERNAL=$source/lessons/media_process" "$workspace/build-media-process/CMakeCache.txt" > /dev/null
+/usr/bin/time -v /usr/bin/cmake --build "$workspace/build-media-process" --target media_process --parallel 2
+cp "$workspace/build-media-process/media_process" "$output/media_process"
+file "$output/ChatServer" "$output/media_process"
+sha256sum "$output/ChatServer" "$output/media_process"

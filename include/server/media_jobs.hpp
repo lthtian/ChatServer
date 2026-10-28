@@ -15,6 +15,7 @@ public:
     ~MediaJobs();  // 停止子进程并等待磁盘工作线程退出。
     void start();  // 启动恢复、领取、执行、提交结果的协程。
     void stop();  // 发出停止信号；中断任务留给下次启动恢复。
+    nlohmann::json probe(const std::string& id, const std::string& hash);  // 在独立探测线程运行，原子保存描述。
     bool busy(const std::string& id) const { return running_id_ == id; }  // 防止处理中删除原件。
 private:
     boost::asio::awaitable<void> run();  // 不持有数据库连接等待转码。

@@ -282,10 +282,8 @@ class MediaServiceTest(unittest.TestCase):
         self.assertEqual(schema.execute("SELECT COUNT(*) FROM History WHERE client_msg_id='" + client_id + "'",
             schema.MediaSchemaTest.database).stdout.strip(), '1')
 
-    @unittest.skipUnless(os.environ.get('CHAT_HLS_BUNDLE') and os.environ.get('CHAT_HLS_SOURCE'), 'HLS fixtures not selected')
+    @unittest.skipUnless(os.environ.get('CHAT_MEDIA_PROCESS') and os.environ.get('CHAT_HLS_SOURCE'), 'HLS fixtures not selected')
     def test_hls_assets(self):
-        import shutil
-        folder = pathlib.Path(os.environ['CHAT_HLS_BUNDLE'])
         sample = pathlib.Path(os.environ['CHAT_HLS_SOURCE']).read_bytes()
         sender, receiver, outsider, anonymous = self.clients
         conversation = dict(is_group=False, target=2)
@@ -299,20 +297,17 @@ class MediaServiceTest(unittest.TestCase):
             client_msg_id=intent, media_id=media['media_id'])['ok'])
         fields = dict(conversation=dict(is_group=False, target=1), media_id=media['media_id'], variant='playback')
         before = receiver.request('read', **fields)
-        self.assertEqual(before['data']['format'], 'mp4')
-        catalog = json.loads((folder / 'catalog.json').read_text())
+        self.assertEqual(before['data']['format'], 'original')
         base = pathlib.Path(self.directory.name) / 'objects' / 'objects' / media['media_id'] / 'hls'
-        base.mkdir(parents=True)
-        (base / 'status').write_text('{"state":"processing"}')
-        self.assertEqual(receiver.request('read', **fields)['data']['hls_state'], 'processing')
-        for asset in catalog['assets']:
-            target = base / catalog['revision'] / asset['path'].replace('.', '_')
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(folder / asset['path'], target)
-        (base / 'catalog').write_text(json.dumps(catalog))
-        ready = receiver.request('read', **fields)
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            ready = receiver.request('read', **fields)
+            if ready['data']['hls_state'] in ('ready', 'failed'): break
+            self.assertIn(ready['data']['hls_state'], ('queued', 'processing'))
+            time.sleep(.1)
         self.assertTrue(ready['ok'], ready)
         self.assertEqual(ready['data']['format'], 'hls')
+        catalog = json.loads((base / 'catalog').read_text())
         self.assertEqual([v['id'] for v in ready['data']['variants']], [v['id'] for v in catalog['variants']])
         descriptor = ready['data']['download']
         for asset in catalog['assets']:

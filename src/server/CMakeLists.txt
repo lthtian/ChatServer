@@ -5,7 +5,7 @@ aux_source_directory(./db DB_LIST)
 aux_source_directory(./redis REDIS_LIST)
 add_executable(ChatServer ${SRC_LIST} ${DB_LIST} ${REDIS_LIST})
 # 直播模块显式登记，使既有构建目录在接入模块时重新扫描源文件。
-target_sources(ChatServer PRIVATE live_service.cpp live_rtc.cpp db/live_repository.cpp)
+target_sources(ChatServer PRIVATE live_service.cpp live_rtc.cpp db/live_repository.cpp media_description.cpp)
 
 # 指定链接时依赖的库文件（移除 mysqlclient，使用 Boost::mysql 头文件库）
 target_link_libraries(ChatServer chat_media ${OpenCV_LIBS} ${Boost_LIBRARIES} hiredis pthread ssl crypto)
