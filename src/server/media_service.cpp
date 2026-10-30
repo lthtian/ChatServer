@@ -197,9 +197,13 @@ asio::awaitable<json> MediaService::request(int actor, Session::Ptr session, jso
             if (media["kind"] != "file") throw MediaError("invalid_argument");
             if (description.value("state", "") != "recognized")
                 co_return json{{"format", "unavailable"}, {"description", description}, {"hls_state", "not_applicable"}};
-            const auto hls = co_await asio::co_spawn(workers_, Work<std::shared_ptr<const HlsCatalog>>(
-                [this, id, hash] { return LoadHls(store_, id, hash); }), asio::use_awaitable);
-            const auto job = co_await repository.job_status(id);
+            std::shared_ptr<const HlsCatalog> hls;
+            json job = json::object();
+            if (NeedsHlsJob(description)) {
+                hls = co_await asio::co_spawn(workers_, Work<std::shared_ptr<const HlsCatalog>>(
+                    [this, id, hash] { return LoadHls(store_, id, hash); }), asio::use_awaitable);
+                job = co_await repository.job_status(id);
+            }
             const auto state = hls ? "ready" : job.empty() ? "not_applicable" :
                 job.at("state").get<std::string>() == "ready" ? "failed" : job.at("state").get<std::string>();
             co_return json{{"format", hls ? "hls" : "original"}, {"hls_state", state}, {"description", description},

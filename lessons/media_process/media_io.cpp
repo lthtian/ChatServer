@@ -22,6 +22,10 @@ QJsonValue Ratio(AVRational ratio) {
 }
 QJsonValue Name(const char* value) { return value ? QJsonValue(QString::fromUtf8(value)) : QJsonValue(); }
 QJsonValue Positive(int value) { return value > 0 ? QJsonValue(value) : QJsonValue(); }
+QJsonValue Metadata(const AVStream* stream, const char* key) {
+  const auto* entry = av_dict_get(stream->metadata, key, nullptr, 0);
+  return entry ? Name(entry->value) : QJsonValue();
+}
 }
 
 void Probe(const std::string& input_path, const std::string& output_path) {
@@ -69,13 +73,18 @@ void Probe(const std::string& input_path, const std::string& output_path) {
     if (input->duration != AV_NOPTS_VALUE && input->duration >= 0)
       result["duration_us"] = double(input->duration);
     QJsonArray tracks;
+    bool default_video = false, default_audio = false;
     for (unsigned i = 0; i < input->nb_streams; ++i) {
       AVStream* stream = input->streams[i];
       const auto* p = stream->codecpar;
       QJsonObject track{{"index", stream->index}, {"type", Name(av_get_media_type_string(p->codec_type))},
           {"codec", Name(avcodec_get_name(p->codec_id))}, {"profile", Name(avcodec_profile_name(p->codec_id, p->profile))},
           {"time_base", Ratio(stream->time_base)}, {"decoder_available", avcodec_find_decoder(p->codec_id) != nullptr},
-          {"attached_picture", bool(stream->disposition & AV_DISPOSITION_ATTACHED_PIC)}};
+          {"attached_picture", bool(stream->disposition & AV_DISPOSITION_ATTACHED_PIC)},
+          {"default", bool(stream->disposition & AV_DISPOSITION_DEFAULT)},
+          {"language", Metadata(stream, "language")}, {"title", Metadata(stream, "title")}};
+      if (track["title"].isNull()) track["title"] = Metadata(stream, "handler_name");
+      const bool marked_default = track["default"].toBool();
       track["start_us"] = stream->start_time == AV_NOPTS_VALUE ? QJsonValue() :
           QJsonValue(double(av_rescale_q(stream->start_time, stream->time_base, AVRational{1, AV_TIME_BASE})));
       track["duration_us"] = stream->duration == AV_NOPTS_VALUE ? QJsonValue() :
@@ -96,14 +105,20 @@ void Probe(const std::string& input_path, const std::string& output_path) {
           QJsonArray items; for (int value : values) items.append(value);
           track["display_matrix"] = items;
         }
-        if (result["video_stream"].isNull() && !(stream->disposition & AV_DISPOSITION_ATTACHED_PIC))
+        if (!(stream->disposition & AV_DISPOSITION_ATTACHED_PIC) &&
+            (result["video_stream"].isNull() || (marked_default && !default_video))) {
           result["video_stream"] = stream->index;
+          default_video = marked_default;
+        }
       } else if (p->codec_type == AVMEDIA_TYPE_AUDIO) {
         track["sample_rate"] = Positive(p->sample_rate);
         track["channels"] = Positive(p->ch_layout.nb_channels);
         char layout[128]{};
         track["channel_layout"] = av_channel_layout_describe(&p->ch_layout, layout, sizeof(layout)) >= 0 ? Name(layout) : QJsonValue();
-        if (result["audio_stream"].isNull()) result["audio_stream"] = stream->index;
+        if (result["audio_stream"].isNull() || (marked_default && !default_audio)) {
+          result["audio_stream"] = stream->index;
+          default_audio = marked_default;
+        }
       }
       tracks.append(track);
     }

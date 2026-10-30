@@ -14,10 +14,33 @@ def windows(path):
     return subprocess.check_output(['wslpath', '-w', str(path)], text=True).strip()
 
 
-def check_diagnostics(stderr, name):
-    lines = [line for line in stderr.splitlines() if not re.fullmatch(
-        r"\[hls @ [0-9a-fA-F]+\] Opening 'http://127\.0\.0\.1:\d+/media/hls/[0-9a-f]{32}/"
-        r"(?:360|480|720)p/seg_\d+\.ts' for reading", line)]
+def check_diagnostics(stderr, name, host=r'127\.0\.0\.1:\d+'):
+    lines, canceled, active = [], [], None
+    interruption = (
+        r'\[mov,mp4,m4a,3gp,3g2,mj2 @ [0-9a-fA-F]+\] Could not find codec parameters for stream \d+ .*: unspecified pixel format',
+        r"Consider increasing the value for the 'analyzeduration' \(\d+\) and 'probesize' \(\d+\) options",
+        r'\[mov,mp4,m4a,3gp,3g2,mj2 @ [0-9a-fA-F]+\] Packet corrupt \(stream = \d+, dts = -?\d+\)\.',
+        r'\[h264 @ [0-9a-fA-F]+\] Invalid NAL unit size \(\d+ > \d+\)\.',
+        r'\[h264 @ [0-9a-fA-F]+\] missing picture in access unit with size \d+',
+    )
+    for line in stderr.splitlines():
+        if not line: continue
+        boundary = re.fullmatch(r'(BEGIN|END) cancel (online|cached|repaired) input', line)
+        if boundary:
+            if boundary[1] == 'BEGIN':
+                if active is not None: raise RuntimeError('Nested input cancellation')
+                active = boundary[2]
+            else:
+                if active != boundary[2]: raise RuntimeError('Unmatched input cancellation')
+                active = None
+            continue
+        if active and any(re.fullmatch(pattern, line) for pattern in interruption):
+            canceled.append(line)
+            continue
+        if not re.fullmatch(r"\[hls @ [0-9a-fA-F]+\] Opening 'http://" + host +
+                r"/media/hls/[0-9a-f]{32}/(?:360|480|720)p/seg_\d+\.ts' for reading", line):
+            lines.append(line)
+    if active is not None: raise RuntimeError('Input cancellation did not finish')
     # 公开 H.264/HEVC 样本实际为全范围 yuvj420p；允许这一精确弃用提示，拒绝其他诊断。
     if name == 'video-vp9-opus.webm':
         if lines: raise RuntimeError('Unexpected VP9 diagnostics: ' + stderr)
@@ -25,6 +48,7 @@ def check_diagnostics(stderr, name):
             r'\[swscaler @ [0-9a-fA-F]+\] deprecated pixel format used, make sure you did set range correctly',
             line) for line in lines):
         raise RuntimeError('Unexpected full-range fixture diagnostics: ' + stderr)
+    return canceled
 
 
 def main():

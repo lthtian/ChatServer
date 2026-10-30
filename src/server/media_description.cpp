@@ -52,6 +52,13 @@ void SaveDescription(const DiskStore& store, const std::string& id, const std::s
 }
 
 bool NeedsHlsJob(const json& description) {
-    return description.value("state", "") == "recognized" && description.value("demuxer", "") == "mov";
+    if (description.value("state", "") != "recognized" || description.value("demuxer", "") != "mov") return false;
+    unsigned video = 0, audio = 0;
+    for (const auto& track : description.at("tracks")) {
+        if (track.at("type") == "audio") ++audio;
+        if (track.at("type") == "video" && !track.at("attached_picture").get<bool>()) ++video;
+    }
+    // 当前派生输出只含一条视频和一条音轨；多轨文件通过原件保留选择能力。
+    return video == 1 && audio <= 1;
 }
 }

@@ -70,6 +70,24 @@ class MediaCapabilitiesTest(MediaServiceTest):
         self.assertNotIn('download', rejected)
         self.assertEqual(transfer(self.read(media_id, 'original')['data']['download']), content)
 
+    def test_multiple_audio_preserves_original(self):
+        for name in ('dual.mp4', 'two-video.mp4'):
+            with self.subTest(name=name):
+                content = (Path(os.environ['CHAT_TRACK_SAMPLES']) / name).read_bytes()
+                media_id = self.upload_file(name, content)
+                playback = self.read(media_id, 'playback')['data']
+                self.assertEqual(playback['format'], 'original')
+                self.assertEqual(playback['hls_state'], 'not_applicable')
+                self.assertEqual(playback['variants'], [])
+                if name == 'dual.mp4':
+                    self.assertEqual(sum(t['type'] == 'audio' for t in playback['description']['tracks']), 2)
+                    self.assertEqual(playback['description']['audio_stream'], 2)
+                    self.assertEqual(playback['description']['tracks'][2]['language'], 'zho')
+                else:
+                    self.assertEqual(playback['description']['video_stream'], 1)
+                self.assertEqual(transfer(playback['download']), content)
+                self.assertEqual(self.clients[0].request('status', media_id=media_id)['data']['hls_job'], {})
+
     def test_non_video_and_missing_description(self):
         for name, content in [('ordinary.bin', b'ordinary file'), ('invalid.mp4', b'not video')]:
             media_id = self.upload_file(name, content)
