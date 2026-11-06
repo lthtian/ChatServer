@@ -1,6 +1,6 @@
 # 本地构建与阿里云服务部署交接
 
-整理日期：2026-10-06。当前自动点播部署见第 13 节；第 11、12 节为此前发布记录。
+整理日期：2026-10-06，更新日期：2026-10-28。当前媒体能力发布见第 15 节；第 11～14 节为此前发布记录。后续操作仍须核对线上实际状态。
 
 本文包含本机实际构建脚本、2026-09-21 程序部署记录及公网直连配置。接手时仍应读取服务器实际状态；连接入口与直连配置见第 9 节。
 
@@ -328,3 +328,35 @@ SRS独立 `srs-chat.service`，本机固定源码构建6.0.184，云端只运行
 发布后SRS的 `hls_aof_ratio` 设为10，避免两秒目标×默认2.1倍的强制封段截断长GOP；当前运行配置与仓库模板一致，调整前配置另存 `srs-before-aof.conf`。不要将默认短阈值直接用于九秒以上GOP的文件源。
 
 公网已通过Windows C++ live_push→SRS→Qt HTTP-FLV/HLS、暂停重入、历史卡片点击播放、结束与陌生人拒绝，后续TS独立解码干净；另新建直播重复验证通过。Qt最终EXE在既有Debug目录，21,177,416字节，SHA-256 `d3a328d189b1e69b67cfe87b95abdc82414342562bf82319f07309a7d303f69f`。详细构建命令、验证边界、一次未稳定复现的HTTP超时诊断与运行路径见 `docs/STAGE9_LIVE_DELIVERY.md`。
+
+## 15. 第一阶段媒体识别与分享公网发布（2026-10-28）
+
+当前 ChatServer 与 media_process 配套位于 `/home/lth/chat_server/releases/20261028-135339-media-stage1`。新增的最后一份 drop-in 为 `/etc/systemd/system/chatserver.service.d/zzz-media-capabilities.conf`，同时覆盖 `ExecStart` 与 `CHAT_MEDIA_PROCESS`。SRS、Nginx 和已有其他配置保持原状；后续发布不能只改 `zz-live.conf`，忽略这份生效顺序更后的配置。
+
+备份位于 `/home/lth/chat_server/backups/20261028-135339-media-stage1`，包含原 service/drop-in、control.env、数据库和媒体。没有数据库迁移。两个 Linux 目标由本机 WSL 的 C 盘 worktree `deploy/build-rtc-server.sh` 配套构建，输出目录为 `D:/chat/_server/Output/linux-x64/rtc`；处理器必须包含第一阶段所需的 `probe` 入口。
+
+七组视频通过公网 Qt 聊天分享、原件在线/下载播放、缓存修复和历史恢复；图片、普通文件、Range、权限、自动 HLS、Qt HLS 切档/续签及 RTC 推流/观看/结束清理通过回归。14:21:32 核对 ChatServer active/running、PID197513、NRestarts0，SRS 会话为零，MySQL/Redis/Nginx 正常。PID 和资源数值只是当时快照。
+
+34 个测试账号已按本次 ID/名称清理，20 份测试媒体移入备份中的 acceptance-media；User/History/Media 恢复到部署前的 30/174/22，未覆盖真实用户数据。当前验收环境没有音频输出设备，实际扬声器出声和听感同步仍未验收。
+
+完整产物、构建命令、验证结果和回退说明见[第一阶段公网验收](D:/chat_server/ChatServer/docs/MEDIA_STAGE1_PUBLIC_ACCEPTANCE.md)。第二阶段的运行版本见下一节。
+
+## 16. 第二阶段解码与轨道选择发布（2026-10-28）
+
+当前 ChatServer 与 media_process 配套位于 `/home/lth/chat_server/releases/20261028-152448-media-stage2`，备份为 `/home/lth/chat_server/backups/20261028-152448-media-stage2`。最后生效的 drop-in 是 `/etc/systemd/system/chatserver.service.d/zzzz-media-tracks.conf`，同时覆盖 `ExecStart` 与 `CHAT_MEDIA_PROCESS`；需要回退时移出这一份配置并核对第一阶段配套路径，不能只改主 service。
+
+服务端描述补充轨道默认标记、语言和标题；多音轨或多个非封面视频轨使用原件，避免现有单轨 HLS 派生丢失可选内容。Qt 提供音轨选择、切换后位置/暂停状态恢复、具体解码失败原因，以及音轨全不可用时自动无声继续并持续提示。没有数据库迁移或历史描述回填。
+
+两个 Linux 目标仍由本机 WSL 编译，实际输入为 `C:/Users/lds/.codex/worktrees/rtp-rtcp/ChatServer`，输出 `D:/chat/_server/Output/linux-x64/rtc`；云端只接收并运行 ELF。Qt 实现在 `E:/chat_server_qt/ChatClient-rtc`，Debug x64 主产物 `build/rtc/debug/ChatClient.exe`。详细命令、耗时、架构与摘要见[第二阶段交付](D:/chat_server/ChatServer/docs/MEDIA_STAGE2_DELIVERY.md)。
+
+双音轨 MP4/MKV 和 AV1 10-bit 的原生 Qt 公网上传、在线/下载播放、暂停切轨、缓存与历史通过；Range、权限、自动 HLS、Qt HLS 切档续签、RTC 推流/观看/结束回归通过。16:09:30 核对 ChatServer PID199681、active/running、NRestarts0，实际程序/处理器哈希匹配；MySQL/Redis/Nginx/SRS 正常、SRS 会话0。26个测试账号和16份媒体按精确归属清理并备份，User/History/Media 恢复30/174/22。
+
+本轮曾出现一次注册前控制应答超时，补充诊断后的完整回归没有复现，仍待定位；Nginx `chat_servers` 另保留无监听的6001后端并产生连接拒绝日志，尚无证据将两者直接归因，配置未修改。实际扬声器出声和设备时钟听感同步仍未验收。知识正文见[解码与轨道选择](D:/chat_server/ChatServer/docs/音视频学习/优化02-解码与轨道选择.md)。
+
+## 17. 第三阶段客户端 VFR 与高帧率输入（2026-10-30）
+
+本轮仅修改 `E:/chat_server_qt/ChatClient-rtc` 客户端的点播时间区间处理。VFR 长帧内定位按后继 PTS 选择覆盖目标的画面，60/120 fps 输入复用同一链路；直播和 RTC 继续立即交付。主产物 `build/rtc/debug/ChatClient.exe` 为 Debug x64，2026-10-30 16:59:38 更新，42,486,912 字节，SHA-256 `53e2fa2267beff843b8b29597573306e04eb783656c0b0a49ff731057f2a7892`。
+
+服务端继续运行第二阶段发布目录，没有 Linux 编译或重新部署。六组本地/HTTP 时间线样本、公网 60/120 fps 与 VFR 原件、实际 VFR HLS、既有轨道/几何/文件/HLS/RTC 回归通过；一次 RTC 信令 403 未稳定复现，原因仍待定位。120 fps 输入完整解码不等于屏幕满帧显示，性能与实际音频设备验收另行推进。
+
+专用账号12个、媒体8份按精确归属清理，备份位于 `/home/lth/chat_server/backups/20261030-173029-media-stage3-acceptance`。17:30:43 核对服务 PID203505、active/running、NRestarts0、SRS客户端0，User/History/Media恢复30/174/22，两份 Linux 程序哈希匹配第二阶段。详细证据与构建命令见[第三阶段交付](D:/chat_server/ChatServer/docs/MEDIA_STAGE3_DELIVERY.md)。

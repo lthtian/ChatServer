@@ -341,3 +341,13 @@ tianmu_sama明确项目必需的部署文件应随源码保存。deploy采用逐
 ### 2026-10-18 SRS 配置知识补充
 
 tianmu_sama要求简洁记录SRS配置，并询问RTP/RTCP与现有直播的区别。9.2文档新增SRS配置与进程启动小节：模板/实际配置/占位替换、端口分工、GOP与HLS、回调鉴权、systemd管理及配置生效边界；文档不加入外部链接。协议说明核对RFC3550、6184、4585、8834：RTP携带按编码负载格式打包的媒体，RTCP报告质量与时钟关系，常见扩展提供反馈；通常用UDP但不限定UDP，不承诺可靠或低延迟。现有RTMP/HTTP-FLV/HLS链路未使用RTP/RTCP，当前SRS构建关闭RTC。
+
+### 2026-10-22 六阶段加固集中交付
+
+tianmu_sama授权从前后端future_rtp分别创建codex/media-reinforcement并一次完成六阶段。工作目录为C:/Users/lds/.codex/worktrees/rtp-rtcp/ChatServer与E:/chat_server_qt/ChatClient-rtc；HEAD分别保持605453d0与6727805d，改动尚未提交。六篇知识正文与六阶段加固交付记录仅写D:/chat_server/ChatServer/docs/音视频学习，正文无外链，代码/命令/实际证据按三个实验入口组织。
+
+Qt的SAR/正交旋转镜像、播放时钟与队列JSONL；媒体工具的属性输出、受控TS转封装与编码参数；真实SRS双观众背压、Nginx资源发布缓存、业务生命周期和RTC释放全部实现并完成代表验证。五个Windows目标最终Debug/MinGW x64完整构建通过。ChatServer业务源码未变，与既有WSL构建源逐目录一致后复用产物，未重建。Qt无音频输出设备，不能声称设备消费/主观听感或真实相机麦克风通过。
+
+完整生命周期390.081s通过，保留真实五分钟期限：旧退出回调返回200且未覆盖另一发布身份；过期新FLV/HLS均403，已建FLV继续33830字节，续签HLS200；业务ended而DELETE失败时已有流继续40521字节，恢复管理连接后核对断开并清空publisher。最终清理及回调断言的77.103s短运行也通过，单独标记未验证期限。真实RTC406视频输出/991PCM、窗口395帧，两次viewer DELETE204后仅publisher，业务结束后连接清空。
+
+期限实验必须按time.monotonic等待：业务使用steady_clock，WSL墙钟校时与其经过时间不一致会提前探测。持续FLV状态探测必须有界读取，不能read完整永久响应。实验清理按步骤捕获异常并继续、核对嵌套夹具tearDown_exceptions，未知清理失败不能passed。最终两个随机DB已不存在、测试用户数0、无ChatServer/SRS/Nginx/FFmpeg实验进程，既有redis进程保留。
