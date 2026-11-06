@@ -1,0 +1,984 @@
+#include "mainwindow.h"
+#include "public.h"
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QSplitter>
+#include <QListWidget>
+#include <QTextEdit>
+#include <QPushButton>
+#include <QLineEdit>
+#include <QFrame>
+#include <QDateTime>
+#include <QJsonObject>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QDialog>
+#include <QLabel>
+#include <QMessageBox>
+#include <QSignalBlocker>
+#include <QEvent>
+#include "qnchatmessage.h"
+#include <QTimer>
+#include "media_transfer.h"
+#include "media_window.h"
+#include "desktop_broadcast.h"
+#include "camera_window.h"
+
+MainWindow::MainWindow(QWidget *parent, MyTcpClient* tc)
+    : QMainWindow(parent), tcpclient(tc)
+{
+    // 窗口设置
+    setWindowTitle("聊天");
+    resize(1200, 800);  // 更灵活的初始尺寸
+    setMinimumSize(800, 600);  // 设置最小尺寸
+    this->setWindowIcon(QIcon(":/image/chat.png"));  // 移除图标
+    setupUI();
+    applyStyles();  // 应用样式
+    setupMedia();
+}
+
+MainWindow::~MainWindow()
+{
+    if (cameraPublisher_) delete cameraPublisher_.data();
+    if (cameraViewer_) delete cameraViewer_.data();
+    if (broadcast_) delete broadcast_.data();
+    if (player_) delete player_.data();
+}
+
+
+// ========================================== //
+
+
+void MainWindow::setupUI()
+{
+    // 主分割器（左右布局）
+    QSplitter *mainSplitter = new QSplitter(this);
+
+    /* 左侧联系人列表 */
+    QWidget *leftWidget = new QWidget();
+    QVBoxLayout *leftLayout = new QVBoxLayout(leftWidget);
+
+    contactList = new MyListWidget(this, this);
+    contactList->setObjectName("contactList");
+    contactList->setMinimumWidth(250);  // 设置最小宽度
+    contactList->setFocusPolicy(Qt::NoFocus);  // 禁用焦点框
+    leftLayout->addWidget(contactList, 9);
+
+    QWidget* buttonWidget = new QWidget();
+    QHBoxLayout *buttonLayout = new QHBoxLayout(buttonWidget);
+    buttonLayout->setContentsMargins(5, 5, 5, 5);
+    buttonLayout->setSpacing(0);
+
+    exitButton = new QPushButton();
+    addFriend = new QPushButton();
+    addGroup = new QPushButton();
+    createGroup = new QPushButton();
+    exitButton->setFixedSize(QSize(50, 50));
+    addFriend->setFixedSize(QSize(50, 50));
+    addGroup->setFixedSize(QSize(50, 50));
+    createGroup->setFixedSize(QSize(50, 50));
+    addFriend->setIcon(QIcon(":/image/addfriend.svg"));
+    addFriend->setIconSize(QSize(30, 30));
+    addGroup->setIcon(QIcon(":/image/addgroup.svg"));
+    addGroup->setIconSize(QSize(30, 30));
+    createGroup->setIcon(QIcon(":/image/creategroup.svg"));
+    createGroup->setIconSize(QSize(30, 30));
+    exitButton->setIcon(QIcon(":/image/exit.svg"));
+    exitButton->setIconSize(QSize(30, 30));
+    buttonLayout->addWidget(exitButton);
+    buttonLayout->addWidget(addFriend);
+    buttonLayout->addWidget(addGroup);
+    buttonLayout->addWidget(createGroup);
+
+    leftLayout->addWidget(buttonWidget, 1);
+
+    /* 右侧聊天区域 */
+    QWidget *rightWidget = new QWidget();
+    QVBoxLayout *rightLayout = new QVBoxLayout(rightWidget);
+    rightLayout->setContentsMargins(0, 0, 0, 0);  // 移除默认边距
+    rightLayout->setSpacing(0);
+
+    // 聊天记录区域
+    msgListLabel = new QLabel("欢迎来到TianMu的聊天服务器!");
+    msgListLabel->setFont(QFont("Arial", 16));
+    msgListLabel->setIndent(30);
+    msgListLabel->setStyleSheet(
+        "QLabel {"
+        "  border-left: 10px solid #07c160;"  // 左侧添加 10px 绿色长条
+        "  background-color: #f5f5f5;"
+        "}"
+    );
+
+    msgListLabel->setFixedHeight(64);
+    rightLayout->addWidget(msgListLabel);
+
+    messageList = new QListWidget(this);
+    messageList->setObjectName("chatHistory");
+    messageList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    messageList->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    messageList->setVerticalScrollMode(QListWidget::ScrollPerPixel);    // 平滑滚动
+    messageList->setSelectionMode(QAbstractItemView::NoSelection);
+    messageList->setFocusPolicy(Qt::NoFocus);  // 禁用焦点框
+    messageList->setStyleSheet("QListWidget { padding: 0px; }"
+                               "QListWidget::item:selected { border: none; background-color: transparent; }");
+    rightLayout->addWidget(messageList, 1);
+
+    // 输入区域
+    QWidget *inputWidget = new QWidget();
+    inputWidget->setObjectName("composer");
+    inputWidget->setFixedHeight(150);
+    inputWidget->setStyleSheet("QWidget#composer { background: #fafbfc; border-top: 1px solid #e2e7eb; }");
+    QVBoxLayout *inputLayout = new QVBoxLayout(inputWidget);
+    inputLayout->setContentsMargins(0, 0, 0, 0);  // 移除默认边距
+    inputLayout->setSpacing(0);
+
+    messageInput = new MyTextEdit();
+    messageInput->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    messageInput->setStyleSheet("QTextEdit { background: transparent; border: none; font-size: 15px; padding: 14px 20px; }");
+    messageInput->setPlaceholderText(QStringLiteral("输入消息，Enter 发送"));
+    messageInput->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    sendButton = new QPushButton("发送");
+    sendButton->setFixedWidth(96);  // 固定按钮宽度
+    sendButton->setFixedHeight(36);
+    sendButton->setObjectName("sendButton");
+
+    QHBoxLayout *bLayout = new QHBoxLayout();
+    bLayout->setContentsMargins(20, 0, 20, 14);
+    bLayout->setSpacing(12);
+    videoButton = new QPushButton(QStringLiteral("发送 MP4"), this);
+    videoButton->setObjectName("sendVideoButton");
+    videoButton->setFixedHeight(36);
+    bLayout->addWidget(videoButton);
+    liveButton = new QPushButton(QStringLiteral("创建直播"), this);
+    liveButton->setObjectName("createLiveButton");
+    liveButton->setFixedHeight(36);
+    bLayout->addWidget(liveButton);
+    bLayout->addStretch();  // 将发送按钮推到右侧
+    bLayout->addWidget(sendButton);
+
+    // 输入框与底部操作栏按上下方向排列。
+    QVBoxLayout *inputButtonLayout = new QVBoxLayout();
+    inputButtonLayout->setContentsMargins(0, 0, 0, 0);
+    inputButtonLayout->setSpacing(0);
+    inputButtonLayout->addWidget(messageInput);
+    inputButtonLayout->addLayout(bLayout);
+
+    inputLayout->addLayout(inputButtonLayout);
+    inputLayout->setSpacing(0);
+
+    rightLayout->addWidget(inputWidget);
+
+    // 组装主界面
+    mainSplitter->addWidget(leftWidget);
+    mainSplitter->addWidget(rightWidget);
+    mainSplitter->setHandleWidth(1);  // 分割线宽度
+    mainSplitter->setStretchFactor(1, 3);  // 右侧区域更宽
+
+    setCentralWidget(mainSplitter);
+
+    // 连接信号槽
+    // 界面部分
+    connect(sendButton, &QPushButton::clicked, this, &MainWindow::sendMessage);
+    connect(messageInput, &MyTextEdit::returnPressed, this, &MainWindow::sendMessage);
+    connect(contactList, &QListWidget::itemSelectionChanged, this, &MainWindow::reloadMsgList);
+    connect(exitButton, &QPushButton::clicked, this, &MainWindow::onExitButtonClicked);
+    connect(addFriend, &QPushButton::clicked, this, &MainWindow::onAddFriendClicked);
+    connect(addGroup, &QPushButton::clicked, this, &MainWindow::onAddGroupClicked);
+    connect(createGroup, &QPushButton::clicked, this, &MainWindow::onCreateGroupClicked);
+    // 网络部分（连接成功后绑定 readyRead）
+    connect(tcpclient, &MyTcpClient::connected, this, [this]() {
+        connect(tcpclient->getSocket(), &QTcpSocket::readyRead, this, &MainWindow::recvHandler);
+    });
+    // 连接 MyListWidget 的信号
+    connect(contactList, &MyListWidget::menuHidden, this, [this]() {
+        isMenuVisible = false; // 更新标志位
+    });
+
+    // 初始dialog
+    initDialog1();
+}
+
+void MainWindow::initDialog1()
+{
+    // 创建 Dialog
+    addFriendDialog = new QDialog(this, Qt::FramelessWindowHint);
+    addFriendDialog->setWindowTitle("添加好友");
+
+    // 设置对话框的样式表，添加外边框和圆角
+    addFriendDialog->setStyleSheet("QDialog { border: 2px solid #ccc; border-radius: 10px; background-color: white; }");
+
+    // 创建布局
+    QVBoxLayout* layout = new QVBoxLayout(addFriendDialog);
+
+    // 创建标题行布局
+    QHBoxLayout* titleLayout = new QHBoxLayout();
+    addFriendLabel = new QLabel("添加好友", addFriendDialog);
+
+    // 创建退出按钮
+    QPushButton* closeButton = new QPushButton(addFriendDialog);
+    closeButton->setIcon(QIcon(":/image/close.png"));
+    closeButton->setIconSize(QSize(15, 15));
+    closeButton->setFlat(true);
+    closeButton->setFixedSize(30, 30);
+
+    // 使用样式表为此按钮设置样式，避免全局样式影响
+    closeButton->setStyleSheet(
+        "QPushButton {"
+        "   background: transparent;"  // 背景透明
+        "   border: none;"            // 无边框
+        "}"
+        "QPushButton:hover {"
+        "   icon-size: 20px;"         // 鼠标悬停时图标变大
+        "}"
+    );
+
+
+
+    // 将标签和按钮添加到标题行布局
+    titleLayout->addWidget(addFriendLabel);
+    titleLayout->addStretch();  // 添加一个弹簧，使按钮靠右
+    titleLayout->addWidget(closeButton);
+
+    // 将标题行布局添加到主布局
+    layout->addLayout(titleLayout);
+
+    // 输入框 + 确定按钮
+    QHBoxLayout* inputLayout = new QHBoxLayout();
+    addFriendInput = new QLineEdit(addFriendDialog);
+    QPushButton* confirmButton = new QPushButton("确定", addFriendDialog);
+    confirmButton->setDefault(true);
+
+    inputLayout->addWidget(addFriendInput);
+    inputLayout->addWidget(confirmButton);
+    layout->addLayout(inputLayout);
+
+    // 连接按钮槽函数
+    connect(confirmButton, &QPushButton::clicked, [&]() {
+        qDebug() << "已触发lambda";
+        if(dialogOP == -1) return;
+        QString name = addFriendInput->text();
+        if(name.isEmpty()) return;
+
+        if(dialogOP == 1)
+        {
+            tcpclient->sendJson(QJsonObject{
+                {"id", userid},
+                {"friendname", name},
+                {"msgid", AddFriendMsg}
+            });
+        }
+        else if(dialogOP == 2)
+        {
+            tcpclient->sendJson(QJsonObject{
+                {"userid", userid},
+                {"groupname", name},
+                {"msgid", AddGroupMsg},
+                {"role", QString("normal")}
+            });
+            qDebug() << "已发送加入群聊申请";
+        }
+        else if(dialogOP == 3)
+        {
+            tcpclient->sendJson(QJsonObject{
+                {"userid", userid},
+                {"groupname", name},
+                {"msgid", CreateGroupMsg}
+            });
+        }
+        addFriendInput->clear();
+    });
+
+    // 连接退出按钮的槽函数
+    connect(closeButton, &QPushButton::clicked, [this]() {
+        addFriendDialog->close();
+    });
+}
+
+void MainWindow::applyStyles()
+{
+    // 通用样式
+    setStyleSheet(R"(
+        QWidget {
+            font-family: "微软雅黑";
+        }
+
+        #contactList {
+            background-color: #f5f5f5;
+            border: none;
+            padding: 5px;
+            font-size: 16px;
+
+        }
+
+        #contactList::item {
+            height: 50px;
+            padding: 5px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        #contactList::item:selected {
+            background-color: #e0e0e0;
+        }
+
+        #chatHistory {
+            background-color: white;
+            border: none;
+            padding: 15px;
+        }
+
+        QLineEdit {
+            border: 1px solid #e0e0e0;
+            padding: 8px;
+        }
+
+        QPushButton {
+            background-color: #07c160;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 15px;
+        }
+
+        QPushButton#sendVideoButton {
+            background-color: #e9f6ee;
+            color: #158448;
+            border: 1px solid #cfe8d7;
+        }
+
+        QPushButton:disabled {
+            background-color: #e4e8e6;
+            color: #89928d;
+        }
+
+        QPushButton:hover {
+            background-color: #05a050;
+        }
+
+        QSplitter::handle {
+            background-color: #e0e0e0;
+        }
+    )");
+}
+
+// ------------------------------------------------------------------------------------------ //
+
+void MainWindow::setUser(int id, QString name)
+{
+    userid = id;
+    username = name;
+}
+
+int MainWindow::getUserId()
+{
+    qDebug() << userid;
+    return userid;
+}
+
+// 根据返回的msgid, 触发不同的回复响应代码
+void MainWindow::recvHandler()
+{
+    if (userid < 0) return; // 登录应答由 LoginWindow 读取，避免两个窗口竞争半包。
+    // 循环处理所有已缓冲的完整 JSON 帧，避免粘包导致消息延迟
+    while (true) {
+        QByteArray responseData = tcpclient->read();  // 读取返回的数据
+        if (responseData.isEmpty()) break;  // 没有完整帧了，退出循环
+
+        QJsonDocument jsonDoc = QJsonDocument::fromJson(responseData);  // 解析 JSON 数据
+        if (!jsonDoc.isObject()) {
+            qDebug() << "返回数据不是有效的 JSON 格式！";
+            continue;
+        }
+
+        QJsonObject jsonObj = jsonDoc.object();
+        int msgid = jsonObj["msgid"].toInt();
+        switch (msgid) {
+        case MediaResponse:    media_->handleResponse(jsonObj); break;
+        case MediaMessage:     handleMediaMessage(jsonObj["conversation"].toObject(), jsonObj["message"].toObject()); break;
+        case 29:               handleLiveState(jsonObj["conversation"].toObject(), jsonObj["live"].toObject()); break;
+        case InitMsgAck:        handleInitMsgAck(jsonObj); break;
+        case OTOMsg:
+        case GroupChatMsg:      handleChatMsg(msgid, jsonObj); break;
+        case AddFriendMsgAck:   handleAddFriendAck(jsonObj); break;
+        case AddGroupMsgAck:    handleAddGroupAck(jsonObj); break;
+        case CreateGroupMsgAck: handleCreateGroupAck(jsonObj); break;
+        case HistoryMsgAck:     handleHistoryMsgAck(jsonObj); break;
+        case NewMsgAck:         handleNewMsgAck(jsonObj); break;
+        case imageReqAck:       handleImageReqAck(jsonObj); break;
+        default: break;
+        }
+    } // end while
+}
+
+// 初始化回复处理
+void MainWindow::handleInitMsgAck(const QJsonObject& jsonObj)
+{
+    // 初始化好友列表
+    if (jsonObj.contains("friends") && jsonObj["friends"].isArray()) {
+        QJsonArray friendsArray = jsonObj["friends"].toArray();
+
+        // 遍历 friends 数组
+        for (const QJsonValue &friendValue : friendsArray) {
+            if (friendValue.isString()) {
+                // 处理每个好友 JSON 字符串
+                QString friendJsonStr = friendValue.toString();
+                QJsonDocument friendDoc = QJsonDocument::fromJson(friendJsonStr.toUtf8());
+                if (friendDoc.isObject()) {
+                    QJsonObject friendObj = friendDoc.object();
+                    int id = friendObj["id"].toString().toInt();  // 这里以前有坑!!!
+                    QString name = friendObj["name"].toString();
+                    QString state = friendObj["state"].toString();
+                    // 存入当前好友列表中
+                    _list.insert({name, {id, false}});
+                    // 再向后端申请对应好友的头像
+                    getImage(name);
+                    // 更新前端界面
+                    addToContactList(name, false);
+                }
+            }
+        }
+    }
+    // 初始化群组列表
+    if (jsonObj.contains("groups") && jsonObj["groups"].isArray()) {
+        QJsonArray groupsArray = jsonObj["groups"].toArray();
+
+        // 遍历 groups 数组
+        for (const QJsonValue &groupValue : groupsArray) {
+            if (groupValue.isString()) {
+                // 解析 JSON 字符串
+                QString groupJsonStr = groupValue.toString();
+                QJsonDocument groupDoc = QJsonDocument::fromJson(groupJsonStr.toUtf8());
+                if (groupDoc.isObject()) {
+                    QJsonObject groupObj = groupDoc.object();
+                    int groupId = groupObj["id"].toString().toInt();  // 转换群组 ID
+                    QString groupName = groupObj["groupname"].toString();
+
+                    // 存入当前群组列表
+                    _list.insert({groupName, {groupId, true}});
+                    // 更新前端 UI（假设群组列表是 groupList）
+                    addToContactList(groupName, true);
+                }
+            }
+        }
+    }
+
+    contactList->clearSelection();
+    contactList->setCurrentItem(nullptr);
+}
+
+// 私聊/群聊消息处理
+void MainWindow::handleChatMsg(int msgid, const QJsonObject& jsonObj)
+{
+    // sendername
+    QString name, sendername;
+    if(msgid == OTOMsg) name = jsonObj["sender"].toString(), sendername = name;
+    else name = jsonObj["groupname"].toString(), sendername = jsonObj["sendername"].toString();
+    QString message = jsonObj["message"].toString();
+
+    // 只有当前选中的item是对应的才更新列表
+    if(!contactList->currentItem() || name != contactList->currentItem()->text())
+    {
+        // 到达这里之前肯定已经经历过查询了
+        // 说明当前消息未查看, 计数+1
+        contactList->setItemValue(mp[name], contactList->getItemValue(mp[name]) + 1);
+        int row = contactList->row(mp[name]);
+        QListWidgetItem* takenItem = contactList->takeItem(row); // 移除item
+        contactList->insertItem(0, takenItem); // 插入到顶部(第0行)
+
+        // 告知后端未读消息数+1
+        tcpclient->sendJson(QJsonObject{
+            {"userid", userid},
+            {"sender", _list[name].first},
+            {"isgroup", _list[name].second},
+            {"msgid", addNewMsgCnt}
+        });
+        return;
+    }
+
+    // 创建消息控件
+    QNChatMessage* messageWidget = new QNChatMessage(messageList, &_avatars[sendername]);
+    QString time = QString::number(QDateTime::currentDateTime().toTime_t());
+    QSize size = messageWidget->fontRect(message);
+
+    // 设置对方消息样式
+    QNChatMessage::User_Type userType = QNChatMessage::User_She;
+
+    if(msgid == OTOMsg) messageWidget->setText(message, time, size, userType, name, false);
+    else messageWidget->setText(message, time, size, userType, jsonObj["sendername"].toString(), true);
+
+    // 添加到列表
+    QListWidgetItem* item = new QListWidgetItem();
+    item->setSizeHint(size);
+    messageList->addItem(item);
+    messageList->setItemWidget(item, messageWidget);
+
+    // 接收到消息直接拉到最底
+    messageList->scrollToItem(messageList->item(messageList->count() - 1), QAbstractItemView::PositionAtBottom);
+}
+
+// 添加好友业务处理
+void MainWindow::handleAddFriendAck(const QJsonObject& jsonObj)
+{
+    if(jsonObj.contains("errmsg"))
+        addFriendLabel->setText(jsonObj["errmsg"].toString());
+    if(jsonObj["errno"].toInt() != 0) return;
+    // 更新聊天列表与map
+    addToContactList(jsonObj["friendname"].toString(), false);
+    _list.insert({jsonObj["friendname"].toString(), {jsonObj["friendid"].toInt(), false}});
+}
+
+// 加入群组业务处理
+void MainWindow::handleAddGroupAck(const QJsonObject& jsonObj)
+{
+    if(jsonObj.contains("errmsg"))
+        addFriendLabel->setText(jsonObj["errmsg"].toString());
+    if(jsonObj["errno"].toInt() != 0) return;
+    // 更新聊天列表与map
+    addToContactList(jsonObj["groupname"].toString(), true);
+    _list.insert({jsonObj["groupname"].toString(), {jsonObj["groupid"].toInt(), true}});
+}
+
+// 创建群聊业务处理
+void MainWindow::handleCreateGroupAck(const QJsonObject& jsonObj)
+{
+    if(jsonObj.contains("errmsg"))
+        addFriendLabel->setText(jsonObj["errmsg"].toString());
+    if(jsonObj["errno"].toInt() != 0) return;
+    // 更新聊天列表与map
+    addToContactList(jsonObj["groupname"].toString(), true);
+    _list.insert({jsonObj["groupname"].toString(), {jsonObj["groupid"].toInt(), true}});
+}
+
+// 历史记录处理
+void MainWindow::handleHistoryMsgAck(const QJsonObject& jsonObj)
+{
+    qDebug() << "[DEBUG] HistoryMsgAck received, contains history:" << jsonObj.contains("history");
+    if (!jsonObj.contains("history") || !jsonObj["history"].isArray()) return;
+
+    // 检查响应是否属于当前选中的聊天（异步响应可能乱序到达）
+    bool isgroup = jsonObj["isgroup"].toBool();
+    bool isCurrentChat = false;
+    QString currentChat;
+    if (contactList->currentItem()) {
+        currentChat = contactList->currentItem()->text();
+        if (!currentChat.isEmpty() && _list.count(currentChat)) {
+            auto& info = _list[currentChat];
+            qDebug() << "[DEBUG] Matching: userid=" << userid
+                     << "currentChat=" << currentChat
+                     << "info.first=" << info.first << "info.second=" << info.second
+                     << "isgroup=" << isgroup;
+            if (!isgroup && !info.second && jsonObj.contains("id1") && jsonObj.contains("id2")) {
+                int rId1 = jsonObj["id1"].toInt();
+                int rId2 = jsonObj["id2"].toInt();
+                isCurrentChat = (rId1 == userid && rId2 == info.first);
+                qDebug() << "[DEBUG] oto match: rId1=" << rId1 << "rId2=" << rId2
+                         << "check1=" << (rId1 == userid) << "check2=" << (rId2 == info.first)
+                         << "result=" << isCurrentChat;
+            } else if (isgroup && info.second && jsonObj.contains("groupid")) {
+                int rGid = jsonObj["groupid"].toInt();
+                isCurrentChat = (rGid == info.first);
+                qDebug() << "[DEBUG] group match: rGid=" << rGid << "info.first=" << info.first
+                         << "result=" << isCurrentChat;
+            }
+        } else {
+            qDebug() << "[DEBUG] currentChat empty or not in _list. currentChat=" << currentChat
+                     << "_list.count=" << _list.count(currentChat);
+        }
+    } else {
+        qDebug() << "[DEBUG] contactList has no currentItem!";
+    }
+    if (!isCurrentChat) {
+        qDebug() << "[DEBUG] HistoryMsgAck REJECTED!";
+        return;
+    }
+    qDebug() << "[DEBUG] HistoryMsgAck ACCEPTED, rendering history...";
+
+    QJsonArray historyArray = jsonObj["history"].toArray();
+    // 遍历历史记录
+    QDateTime currentDateTime = QDateTime::currentDateTime();
+    node today{currentDateTime.date().year(), currentDateTime.date().month(), currentDateTime.date().day()};
+    QDateTime LastTime = QDateTime::fromSecsSinceEpoch(0);
+
+    for (const QJsonValue &historyValue : historyArray) {
+        if (historyValue.isString()) {
+            // 处理每个好友 JSON 字符串
+            QString friendJsonStr = historyValue.toString();
+            QJsonDocument HistoryDoc = QJsonDocument::fromJson(friendJsonStr.toUtf8());
+            if (HistoryDoc.isObject()) {
+                QJsonObject historyObj = HistoryDoc.object();
+                int id = historyObj["id"].toString().toInt();  // 这里以前有坑!!!
+                QString message = historyObj["message"].toString();
+                QString msgtime = historyObj["time"].toString();
+                QString name = historyObj["name"].toString();
+
+                if (historyObj["kind"].toString() == "live") {
+                    appendLiveMessage(currentConversation(), historyObj["record"].toObject());
+                    continue;
+                }
+                if (historyObj["kind"].toString() == "file") {
+                    appendVideoMessage(currentConversation(), historyObj["record"].toObject());
+                    continue;
+                }
+
+                QDateTime dateTime = QDateTime::fromString(msgtime, "yyyy-MM-dd HH:mm:ss");
+                // 根据dateTime判断是否显示时间
+                node x{dateTime.date().year(), dateTime.date().month(), dateTime.date().day()};
+                if(timeset.count(x) == 0 && !(x == today))
+                {
+                    dealMessageTime(dateTime, 0);
+                    timeset.insert(x);
+                }
+                qint64 diffMinutes = LastTime.msecsTo(dateTime) / 60000;
+                if(x == today && diffMinutes >= 10)
+                {
+                    dealMessageTime(dateTime, 1);
+                    LastTime = dateTime;
+                }
+
+                // 更新前端界面
+                QNChatMessage* messageWidget;
+
+                // 设置对方消息样式
+                QNChatMessage::User_Type userType;
+                if(id != userid)
+                {
+                    if(_avatars[name].isNull())
+                    {
+                        _list[name] = {id, false};
+                        getImage(name);
+                    }
+                    userType = QNChatMessage::User_She, messageWidget = new QNChatMessage(messageList, &_avatars[name]);
+                }
+                else userType = QNChatMessage::User_Me, messageWidget = new QNChatMessage(messageList, &avatar);
+
+                QString time = QString::number(QDateTime::currentDateTime().toTime_t());
+                QSize size = messageWidget->fontRect(message);
+
+                // 这里要用到后台发来的姓名
+                if(id == userid) messageWidget->setText(message, time, size, userType, username);
+                else
+                {
+                    if(isgroup)
+                    {
+                        messageWidget->setText(message, time, size, userType, name, true);
+                    }
+                    else messageWidget->setText(message, time, size, userType, name);
+                }
+
+                // 更新消息状态为发送成功
+                messageWidget->setTextSuccess();
+
+                // 添加到列表
+                QListWidgetItem* item = new QListWidgetItem();
+                item->setSizeHint(size);
+                messageList->addItem(item);
+                messageList->setItemWidget(item, messageWidget);
+            }
+        }
+    }
+    QTimer::singleShot(2, this, &MainWindow::refreshMessageLayout);
+    messageList->scrollToItem(messageList->item(messageList->count() - 1), QAbstractItemView::PositionAtBottom);
+}
+
+// 查询未读消息数处理
+void MainWindow::handleNewMsgAck(const QJsonObject& jsonObj)
+{
+    qDebug() << "获取NewMsgAck";
+    QString name = jsonObj["name"].toString();
+    int cnt = jsonObj["cnt"].toInt();
+    if(cnt == 0) contactList->setItemValue(mp[name], 0);
+    else if(cnt > 0)
+    {
+        contactList->setItemValue(mp[name], cnt);
+        // 排序不改变正在查看的会话；屏蔽临时移除造成的选择信号，避免取消历史请求。
+        auto* current = contactList->currentItem();
+        const QSignalBlocker selection(contactList);
+        int row = contactList->row(mp[name]);
+        QListWidgetItem* takenItem = contactList->takeItem(row); // 移除item
+        contactList->insertItem(0, takenItem); // 插入到顶部(第0行)
+        contactList->setCurrentItem(current);
+    }
+}
+
+// 图片查询处理
+void MainWindow::handleImageReqAck(const QJsonObject& jsonObj)
+{
+    if(jsonObj["isSuccess"].toString() == QString("false")) return;
+    qDebug() << "触发imageReqAck";
+    QString base64Data = jsonObj["image_data"].toString();
+    qDebug() << "Base64数据长度: " << base64Data.length();
+
+    if (base64Data.isEmpty()) {
+        qDebug() << "错误: Base64数据为空";
+        return;
+    }
+
+    // Base64解码
+    QByteArray imageData = QByteArray::fromBase64(base64Data.toUtf8());
+    qDebug() << "解码后图片数据大小: " << imageData.size() << " 字节";
+
+    if (imageData.isEmpty()) {
+        qDebug() << "错误: 解码后图片数据为空";
+        return;
+    }
+
+    QString name = jsonObj["username"].toString();
+
+    // 转换为QPixmap
+    if(name == username) avatar.loadFromData(imageData);
+    else
+    {
+        _avatars[name].loadFromData(imageData);
+        // 如果当前list不为空, 更新一遍头像
+        if(messageList->count() != 0) reloadAvatar();
+    }
+}
+
+void MainWindow::reloadAvatar()
+{
+    for (int i = 0; i < messageList->count(); ++i) {
+        // 获取当前 item
+        QListWidgetItem *item = messageList->item(i);
+
+        // 获取 item 关联的 widget（即 QNChatMessage）
+        QWidget *widget = messageList->itemWidget(item);
+        if (!widget) continue;  // 确保 widget 存在
+
+        // 尝试转换为 QNChatMessage
+        QNChatMessage *chatMessage = qobject_cast<QNChatMessage*>(widget);
+        if (!chatMessage) continue;  // 确保转换成功
+        if(chatMessage->userType() != QNChatMessage::User_Me) chatMessage->setAvatar(&_avatars[chatMessage->name()]);
+    }
+}
+
+void MainWindow::dealMessageTime(QDateTime dateTime, int op)
+{
+    // 更新前端界面
+    QNChatMessage* messageWidget = new QNChatMessage(messageList);
+    QString time = QString::number(dateTime.toTime_t());
+    QSize size = QSize(messageList->width(), 40);
+
+    // 设置对方消息样式
+    QString message;
+    if(op == 0) message = "a";
+    else if(op == 1) message = "b";
+    QNChatMessage::User_Type userType;
+    userType = QNChatMessage::User_Time;
+    messageWidget->setText(message, time, size, userType);
+
+    // 添加到列表
+    QListWidgetItem* item = new QListWidgetItem();
+    item->setSizeHint(size);
+    messageList->addItem(item);
+    messageList->setItemWidget(item, messageWidget);
+}
+
+void MainWindow::addToContactList(QString name, bool isgroup)
+{
+    QListWidgetItem* item = new QListWidgetItem(name);
+    mp[name] = item;
+
+    // 向后台查询未读消息数
+    tcpclient->sendJson(QJsonObject{
+        {"userid", userid},
+        {"sender", _list[name].first},
+        {"name", name},
+        {"isgroup", _list[name].second},
+        {"msgid", NewMsg}
+    });
+
+    if(!isgroup) item->setIcon(QIcon(":/image/otochat.png"));
+    else item->setIcon(QIcon(":/image/groupchat.png"));
+    contactList->addItem(item);
+}
+
+void MainWindow::sendMessage()
+{
+    qDebug() << "触发sendMessage";
+    // 获取输入框中的文本
+    QString message = messageInput->toPlainText();
+    if (message.isEmpty()) return;
+
+    // 清空输入框
+    messageInput->clear();
+
+    // 获取当前选中的联系人
+    QListWidgetItem *currentItem = contactList->currentItem();
+    if(!currentItem)
+    {
+        qDebug() << "当前未选中联系人!";
+        return;
+    }
+
+    // -----------------------------------------------------------------//
+    // 向别人发送消息的同时也更新自己的对话框界面
+    // 创建消息控件
+    QNChatMessage* messageWidget = new QNChatMessage(messageList, &avatar);
+    QString time = QString::number(QDateTime::currentDateTime().toTime_t());
+    QSize size = messageWidget->fontRect(message); // 计算气泡尺寸
+
+    // 根据用户类型设置消息方向（示例中假设是用户自己发送）
+    QNChatMessage::User_Type userType = QNChatMessage::User_Me;
+    messageWidget->setText(message, time, size, userType);
+
+    // 创建ListWidgetItem并设置大小
+    QListWidgetItem* item = new QListWidgetItem();
+    item->setSizeHint(size);
+    messageList->addItem(item);
+    messageList->setItemWidget(item, messageWidget);
+
+    // 更新消息状态为发送成功
+    messageWidget->setTextSuccess();
+    // -----------------------------------------------------------------//
+    messageList->scrollToItem(messageList->item(messageList->count() - 1), QAbstractItemView::PositionAtBottom);
+
+    // 检测联系人是个人还是群
+    QString name = currentItem->text();
+
+    if(!_list[name].second)  // 个人, 私聊
+    {
+        tcpclient->sendJson(QJsonObject{
+            {"id", userid},
+            {"sender", username},
+            {"to", _list[name].first},
+            {"msgid", OTOMsg},
+            {"message", message}
+        });
+    }
+    else   // 群, 群聊
+    {
+        tcpclient->sendJson(QJsonObject{
+            {"userid", userid},
+            {"sendername", username},
+            {"groupid", _list[name].first},
+            {"groupname", name},
+            {"msgid", GroupChatMsg},
+            {"message", message}
+        });
+    }
+}
+
+void MainWindow::reloadMsgList()
+{
+    // 一旦触发reload就清空timeset
+    timeset.clear();
+    if (!contactList->currentItem()) { ++historyGeneration_; return; }
+    QString current = contactList->currentItem()->text();
+    if(current.isEmpty()) return;
+
+    if(isMenuVisible)  // 使用标志位判断菜单是否可见
+    {
+        isMenuVisible = false;
+        return;
+    }
+
+    msgListLabel->setText(current);
+
+    messageList->clear();
+    displayedMedia_.clear();
+    mediaHistory_ = {};
+    pendingMedia_ = {};
+    historyLoading_ = true;
+    // 向后端发出查找历史记录的请求
+    requestMediaHistory(currentConversation(), QString(), ++historyGeneration_);
+
+    // 请求到信息后再发出清除未读消息数的消息
+    tcpclient->sendJson(QJsonObject{
+        {"userid", userid},
+        {"sender", _list[current].first},
+        {"isgroup", _list[current].second},
+        {"msgid", removeNewMsgCnt}
+    });
+
+    // 取消标记
+    contactList->setItemValue(mp[current], 0);
+}
+
+// 向后端发出初始化界面的请求
+void MainWindow::initByTCP()
+{
+    tcpclient->sendJson(QJsonObject{
+        {"msgid", InitMsg},
+        {"id", userid}
+    });
+
+    qDebug() << "已发送初始化请求, userid:" << userid;
+
+    _list.insert({username, {userid, false}});
+    getImage(username);
+}
+
+void MainWindow::getImage(QString& name)
+{
+    tcpclient->sendJson(QJsonObject{
+        {"userid", _list[name].first},
+        {"username", name},
+        {"msgid", imageReq}
+    });
+}
+
+void MainWindow::onAddFriendClicked() {
+    addFriendLabel->setText("添加好友");
+    dialogOP = 1;
+    addFriendInput->setFocus();
+    addFriendDialog->exec();  // 显示对话框
+}
+
+void MainWindow::onAddGroupClicked()
+{
+    addFriendLabel->setText("添加群组");
+    dialogOP = 2;
+    addFriendInput->setFocus();
+    addFriendDialog->exec();
+}
+
+void MainWindow::onCreateGroupClicked()
+{
+    addFriendLabel->setText("创建群组");
+    dialogOP = 3;
+    addFriendInput->setFocus();
+    addFriendDialog->exec();
+}
+
+void MainWindow::onExitButtonClicked()
+{
+    this->close();
+}
+
+void MainWindow::resizeEvent(QResizeEvent *event) {
+    QMainWindow::resizeEvent(event);
+
+    // 遍历所有消息项，调整气泡宽度
+    for (int i = 0; i < messageList->count(); i++) {
+        QListWidgetItem* item = messageList->item(i);
+        QNChatMessage* widget = qobject_cast<QNChatMessage*>(messageList->itemWidget(item));
+        if (widget) {
+            QSize newSize = widget->fontRect(widget->text());
+            item->setSizeHint(newSize);
+            widget->setFixedWidth(messageList->width()); // 强制宽度适应
+        }
+    }
+}
+
+void MainWindow::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::WindowStateChange) {
+        // 窗口状态变化（如最大化/最小化）后强制触发resizeEvent
+        QTimer::singleShot(0, this, [this]() {
+            QResizeEvent resizeEvent(size(), QSize());
+            this->resizeEvent(&resizeEvent);
+        });
+    }
+    QMainWindow::changeEvent(event);
+}
+
+void MainWindow::refreshMessageLayout()
+{
+    // 创建一个resize事件并发送给窗口
+    QResizeEvent resizeEvent(this->size(), this->size());
+    QApplication::sendEvent(this, &resizeEvent);
+
+    // 确保滚动到底部
+    if (messageList->count() > 0) {
+        messageList->scrollToItem(messageList->item(messageList->count() - 1), QAbstractItemView::PositionAtBottom);
+    }
+}
